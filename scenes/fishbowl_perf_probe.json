@@ -1,0 +1,405 @@
+{
+  "version": 3,
+  "loadTestFloor": false,
+  "loadVoxelWorld": false,
+  "loadOBBVolumes": false,
+  "loadGlassPanel": false,
+  "loadAquariumTest": true,
+  "loadGlassTestScene": false,
+  "loadProceduralWorld": false,
+  "loadVoxelImport": false,
+  "useMeshTankGlass": true,
+  "enableWater": true,
+  "useWaterV2": true,
+  "enableGlass": true,
+  "enablePointLights": false,
+  "loadCloudScene": false,
+  "cloudSeed": 42,
+  "cloudAltitude": 100.0,
+  "cloudWindSpeed": 0.5,
+  "cloudWindDirection": [
+    0.0,
+    1.0
+  ],
+  "cloudCoverage": 0.4,
+  "cloudScale": 48.0,
+  "cloudShadowStrength": 0.35,
+  "skyPreset": 4,
+  "skyColor": [
+    0.52,
+    0.64,
+    0.74
+  ],
+  "loadStarScene": false,
+  "starSeed": 123,
+  "starAltitude": 150.0,
+  "starDensity": 0.02,
+  "cameraPosition": [
+    0.0,
+    18.0,
+    54.0
+  ],
+  "cameraYaw": 0.0,
+  "cameraPitch": -0.19,
+  "worldSeed": 1337,
+  "worldDimsX": 1,
+  "worldDimsY": 1,
+  "worldDimsZ": 1,
+  "useDefaultPlaceables": false,
+  "placeables": [
+    {
+      "uuid": "10000000-0000-4000-8000-000000000001",
+      "prototypeSlug": "eelgrass",
+      "prototypeVersion": 1,
+      "position": [
+        -9.5,
+        8.03,
+        -2.5
+      ],
+      "rotation": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": [
+        0.74,
+        0.92,
+        0.74
+      ],
+      "seed": 101
+    },
+    {
+      "uuid": "10000000-0000-4000-8000-000000000002",
+      "prototypeSlug": "ribbon_kelp",
+      "prototypeVersion": 1,
+      "position": [
+        -6.5,
+        8.03,
+        6.4
+      ],
+      "rotation": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": [
+        0.68,
+        0.86,
+        0.68
+      ],
+      "seed": 137
+    },
+    {
+      "uuid": "10000000-0000-4000-8000-000000000003",
+      "prototypeSlug": "bud_cluster",
+      "prototypeVersion": 1,
+      "position": [
+        -3.8,
+        8.03,
+        -8.2
+      ],
+      "rotation": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": [
+        0.78,
+        0.82,
+        0.78
+      ],
+      "seed": 173
+    },
+    {
+      "uuid": "10000000-0000-4000-8000-000000000004",
+      "prototypeSlug": "forked_sprig",
+      "prototypeVersion": 1,
+      "position": [
+        2.7,
+        8.03,
+        7.6
+      ],
+      "rotation": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": [
+        0.72,
+        0.88,
+        0.72
+      ],
+      "seed": 211
+    },
+    {
+      "uuid": "10000000-0000-4000-8000-000000000005",
+      "prototypeSlug": "eelgrass",
+      "prototypeVersion": 1,
+      "position": [
+        7.6,
+        8.03,
+        -3.7
+      ],
+      "rotation": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": [
+        0.70,
+        0.90,
+        0.70
+      ],
+      "seed": 257
+    },
+    {
+      "uuid": "10000000-0000-4000-8000-000000000006",
+      "prototypeSlug": "ribbon_kelp",
+      "prototypeVersion": 1,
+      "position": [
+        9.3,
+        8.03,
+        4.3
+      ],
+      "rotation": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": [
+        0.62,
+        0.84,
+        0.62
+      ],
+      "seed": 293
+    },
+    {
+      "uuid": "10000000-0000-4000-8000-000000000007",
+      "prototypeSlug": "forked_sprig",
+      "prototypeVersion": 1,
+      "position": [
+        -10.6,
+        8.03,
+        5.1
+      ],
+      "rotation": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": [
+        0.66,
+        0.82,
+        0.66
+      ],
+      "seed": 331
+    },
+    {
+      "uuid": "10000000-0000-4000-8000-000000000008",
+      "prototypeSlug": "bud_cluster",
+      "prototypeVersion": 1,
+      "position": [
+        0.6,
+        8.03,
+        -11.0
+      ],
+      "rotation": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": [
+        0.72,
+        0.78,
+        0.72
+      ],
+      "seed": 367
+    },
+    {
+      "uuid": "10000000-0000-4000-8000-000000000009",
+      "prototypeSlug": "eelgrass",
+      "prototypeVersion": 1,
+      "position": [
+        11.2,
+        8.03,
+        -0.8
+      ],
+      "rotation": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": [
+        0.62,
+        0.82,
+        0.62
+      ],
+      "seed": 401
+    },
+    {
+      "uuid": "10000000-0000-4000-8000-00000000000a",
+      "prototypeSlug": "ribbon_kelp",
+      "prototypeVersion": 1,
+      "position": [
+        -1.5,
+        8.03,
+        10.8
+      ],
+      "rotation": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": [
+        0.64,
+        0.82,
+        0.64
+      ],
+      "seed": 443
+    },
+    {
+      "uuid": "10000000-0000-4000-8000-00000000000b",
+      "prototypeSlug": "forked_sprig",
+      "prototypeVersion": 1,
+      "position": [
+        5.8,
+        8.03,
+        -9.2
+      ],
+      "rotation": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": [
+        0.64,
+        0.80,
+        0.64
+      ],
+      "seed": 487
+    },
+    {
+      "uuid": "10000000-0000-4000-8000-00000000000c",
+      "prototypeSlug": "bud_cluster",
+      "prototypeVersion": 1,
+      "position": [
+        -7.8,
+        8.03,
+        -6.6
+      ],
+      "rotation": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": [
+        0.70,
+        0.78,
+        0.70
+      ],
+      "seed": 521
+    },
+    {
+      "uuid": "10000000-0000-4000-8000-00000000000d",
+      "prototypeSlug": "red_ludwigia",
+      "prototypeVersion": 1,
+      "position": [
+        -1.0,
+        8.03,
+        -5.4
+      ],
+      "rotation": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": [
+        0.72,
+        0.82,
+        0.72
+      ],
+      "seed": 563
+    },
+    {
+      "uuid": "10000000-0000-4000-8000-00000000000e",
+      "prototypeSlug": "golden_crypt",
+      "prototypeVersion": 1,
+      "position": [
+        -9.6,
+        8.03,
+        1.3
+      ],
+      "rotation": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": [
+        0.82,
+        0.78,
+        0.82
+      ],
+      "seed": 601
+    },
+    {
+      "uuid": "10000000-0000-4000-8000-00000000000f",
+      "prototypeSlug": "teal_fanwort",
+      "prototypeVersion": 1,
+      "position": [
+        7.4,
+        8.03,
+        7.1
+      ],
+      "rotation": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": [
+        0.74,
+        0.84,
+        0.74
+      ],
+      "seed": 641
+    },
+    {
+      "uuid": "10000000-0000-4000-8000-000000000010",
+      "prototypeSlug": "red_ludwigia",
+      "prototypeVersion": 1,
+      "position": [
+        8.2,
+        8.03,
+        -7.0
+      ],
+      "rotation": [
+        1.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "scale": [
+        0.68,
+        0.76,
+        0.68
+      ],
+      "seed": 683
+    }
+  ],
+  "name": "fishbowl_perf_probe",
+  "description": "Cloudless fishbowl performance probe with a faceted traditional glass bowl, Water V2, layered substrate detail, fish, and a planted ring of explicit catalog foliage."
+}

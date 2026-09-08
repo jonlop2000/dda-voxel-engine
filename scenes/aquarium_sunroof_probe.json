@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "loadTestFloor": false,
+  "loadVoxelWorld": false,
+  "loadOBBVolumes": false,
+  "loadGlassPanel": false,
+  "loadAquariumTest": true,
+  "loadGlassTestScene": false,
+  "loadProceduralWorld": false,
+  "loadVoxelImport": false,
+  "useMeshTankGlass": false,
+  "enableWater": true,
+  "useWaterV2": true,
+  "enableGlass": true,
+  "enablePointLights": true,
+  "loadCloudScene": false,
+  "cloudSeed": 42,
+  "cloudAltitude": 100.0,
+  "cloudWindSpeed": 0.5,
+  "cloudWindDirection": [
+    0.0,
+    1.0
+  ],
+  "cloudCoverage": 0.4,
+  "cloudScale": 48.0,
+  "cloudShadowStrength": 0.35,
+  "skyPreset": 4,
+  "skyColor": [
+    0.76,
+    0.80,
+    0.86
+  ],
+  "loadStarScene": false,
+  "starSeed": 123,
+  "starAltitude": 150.0,
+  "starDensity": 0.02,
+  "cameraPosition": [
+    14.0,
+    8.0,
+    20.0
+  ],
+  "cameraYaw": -0.62,
+  "cameraPitch": 0.14,
+  "worldSeed": 1337,
+  "worldDimsX": 1,
+  "worldDimsY": 1,
+  "worldDimsZ": 1,
+  "name": "aquarium_sunroof_probe",
+  "description": "Cloudless sunroof-chamber regression probe with Water V2 and a pinned camera."
+}

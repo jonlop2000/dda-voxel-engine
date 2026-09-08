@@ -1,0 +1,246 @@
+#version 450
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../voxel/dda_common.glsl"
+#include "../voxel_volume.glsl"
+#define STOCHASTIC_SET 0
+#define STOCHASTIC_BINDING 2
+#include "../stochastic_common.glsl"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// g-buffer inputs
+layout(set = 0, binding = 0) uniform sampler2D gDepth;
+layout(set = 0, binding = 1) uniform sampler2D gNormal;
+
+// ao output
+layout(set = 0, binding = 3, r16f) uniform image2D uAOOut;
+
+layout(std430, set = 0, binding = 4) readonly buffer AuxiliaryTileWork
+{
+    uint groupCountX;
+    uint groupCountY;
+    uint groupCountZ;
+    uint _tileHeaderPad;
+    uvec2 tileCoords[];
+} tileWork;
+
+// volume voxel texture (reuse existing VOXEL_SET = 2)
+layout(set = VOXEL_SET, binding = 2) uniform usampler3D uVoxelTex;
+
+layout(push_constant) uniform PC
+{
+    mat4 invViewProj;
+    vec4 camPos;
+    vec4 aoParams;         // x=maxDist, y=stepSize, z=intensity, w=bias
+    ivec2 resolution;
+    uint volumeCount;
+    uint frameIndex;
+    uint rayCount;
+    uint volumeIndex;
+    float projectedDistanceScale;
+    float projectedMinDistance;
+} pc;
+
+vec3 reconstructWorldPos(vec2 uv, float depth)
+{
+    vec4 clip = vec4(uv * 2.0 - 1.0, depth, 1.0);
+    vec4 world = pc.invViewProj * clip;
+    return world.xyz / world.w;
+}
+
+bool traceAORay(VolumeGpu vol, vec3 worldOrigin, vec3 worldDir, float maxDist,
+                float stepSize, out float hitDist)
+{
+    vec3 localOrigin = (vol.localFromWorld * vec4(worldOrigin, 1.0)).xyz;
+    vec3 localDirUnnormalized = (vol.localFromWorld * vec4(worldDir, 0.0)).xyz;
+    float localPerWorld = length(localDirUnnormalized);
+    if (localPerWorld <= 1e-5)
+    {
+        return false;
+    }
+    vec3 localDir = localDirUnnormalized / localPerWorld;
+
+    vec3 traceMin;
+    vec3 traceMax;
+    if (!volumeLocalTraceBounds(vol, 1, traceMin, traceMax))
+    {
+        return false;
+    }
+
+    vec2 tNearFar = intersectAABB(localOrigin, localDir, traceMin, traceMax);
+    if (tNearFar.x > tNearFar.y || tNearFar.y < 0.0)
+    {
+        return false;
+    }
+
+    float maxLocalDist = maxDist * localPerWorld;
+    float stepLocal = max(stepSize * localPerWorld, 0.0001);
+    float tStart = max(tNearFar.x, 0.0);
+    float tEnd = min(tNearFar.y, maxLocalDist);
+    if (tStart >= tEnd)
+    {
+        return false;
+    }
+
+    // start past the surface shell. without this, thin voxel rims can sample the
+    // same or immediately adjacent solid cell at t=0 and collapse resolved ao to
+    // black, especially when viewed through water/glass.
+    // keep the self-hit shell independent of sample spacing. step size is a
+    // quality/performance control and must not silently change contact reach.
+    float t = max(tStart, 0.08 * localPerWorld);
+    if (t >= tEnd)
+    {
+        return false;
+    }
+    int maxSteps = int(ceil((tEnd - t) / stepLocal));
+    maxSteps = max(maxSteps, 1);
+
+    ivec3 dims = ivec3(vol.dims_palette_flags.xyz);
+    uint flags = vol.misc.x;
+    bool wrapXZ = (flags & FLAG_WRAP_XZ) != 0u;
+
+    for (int i = 0; i < maxSteps; ++i)
+    {
+        vec3 localPos = localOrigin + localDir * t;
+        ivec3 voxelPos = ivec3(floor(localPos));
+
+        // bounds check (skip X/Z for wrapped volumes)
+        bool inBounds;
+        if (wrapXZ)
+        {
+            // only check y bounds for wrapped volumes
+            inBounds = voxelPos.y >= 0 && voxelPos.y < dims.y;
+        }
+        else
+        {
+            inBounds = all(greaterThanEqual(voxelPos, ivec3(0))) &&
+                       all(lessThan(voxelPos, dims));
+        }
+
+        if (inBounds)
+        {
+            // apply wrapping before sampling
+            ivec3 sampleCoord = wrapVoxelCoord(voxelPos, vol);
+            uint voxel = texelFetch(uVoxelTex, sampleCoord, 0).r;
+            if (voxel != 0u)
+            {
+                PaletteEntry pe = GetPaletteEntry(vol.dims_palette_flags.w, voxel);
+                uint shadingModel = uint(pe.pbr0.w + 0.5);
+                if (shadingModel != SHADING_GLASS && shadingModel != SHADING_WATER)
+                {
+                    hitDist = t / localPerWorld;
+                    return true;
+                }
+            }
+        }
+
+        t += stepLocal;
+        if (t > tEnd)
+        {
+            break;
+        }
+    }
+
+    return false;
+}
+
+vec2 aoSampleOffset(uint sampleIndex)
+{
+    // preserve the existing two-ray pair, then fill the opposite quadrants for
+    // the four-ray quality mode. translating this stratified set by the frame's
+    // blue-noise value keeps the samples decorrelated over time without
+    // clustering the extra rays around either baseline direction.
+    if (sampleIndex == 1u)
+    {
+        return vec2(0.5, 0.5);
+    }
+    if (sampleIndex == 2u)
+    {
+        return vec2(0.25, 0.75);
+    }
+    if (sampleIndex == 3u)
+    {
+        return vec2(0.75, 0.25);
+    }
+    return vec2(0.0);
+}
+
+void main()
+{
+    uvec2 tileCoord = tileWork.tileCoords[gl_WorkGroupID.x];
+    ivec2 pixelPos =
+        ivec2(tileCoord * gl_WorkGroupSize.xy + gl_LocalInvocationID.xy);
+    if (pixelPos.x >= pc.resolution.x || pixelPos.y >= pc.resolution.y)
+    {
+        return;
+    }
+
+    vec2 uv = (vec2(pixelPos) + 0.5) / vec2(pc.resolution);
+    float depth = texture(gDepth, uv).r;
+
+    if (depth >= 0.9999)
+    {
+        imageStore(uAOOut, pixelPos, vec4(1.0));
+        return;
+    }
+
+    float existing = imageLoad(uAOOut, pixelPos).r;
+    if (existing <= 0.001)
+    {
+        return;
+    }
+
+    if (pc.volumeIndex >= pc.volumeCount)
+    {
+        return;
+    }
+
+    VolumeGpu vol = gVolumes[pc.volumeIndex];
+
+    vec3 worldPos = reconstructWorldPos(uv, depth);
+    vec3 normal = normalize(texture(gNormal, uv).rgb * 2.0 - 1.0);
+    vec3 origin = worldPos + normal * pc.aoParams.w;
+
+    vec2 noise = stochasticNoise2D(pixelPos, pc.frameIndex);
+
+    float maxDist = pc.aoParams.x;
+    float traceDistance = maxDist;
+    if (pc.projectedDistanceScale > 0.0)
+    {
+        float cameraDistance = distance(worldPos, pc.camPos.xyz);
+        traceDistance = clamp(cameraDistance * pc.projectedDistanceScale,
+                              clamp(pc.projectedMinDistance, 0.0, maxDist), maxDist);
+    }
+    float stepSize = pc.aoParams.y;
+
+    const uint kMaxAORayCount = 4u;
+    uint sampleCount = clamp(pc.rayCount, 1u, kMaxAORayCount);
+    float occlusion = 0.0;
+    for (uint sampleIndex = 0u; sampleIndex < kMaxAORayCount; ++sampleIndex)
+    {
+        if (sampleIndex >= sampleCount)
+        {
+            break;
+        }
+
+        vec2 sampleNoise = fract(noise + aoSampleOffset(sampleIndex));
+        vec3 direction = sampleHemisphere(sampleNoise, normal);
+        float hitDistance = 0.0;
+        if (traceAORay(vol, origin, direction, traceDistance, stepSize, hitDistance))
+        {
+            float remaining =
+                1.0 - clamp(hitDistance / max(traceDistance, 1e-4), 0.0, 1.0);
+            occlusion += remaining * remaining;
+        }
+    }
+    occlusion /= float(sampleCount);
+
+    float ao = 1.0 - occlusion * pc.aoParams.z;
+    ao = clamp(ao, 0.0, 1.0);
+
+    if (ao < existing)
+    {
+        imageStore(uAOOut, pixelPos, vec4(ao));
+    }
+}

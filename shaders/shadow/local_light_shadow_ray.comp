@@ -1,0 +1,179 @@
+#version 450
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../voxel/dda_common.glsl"
+#include "../voxel_volume.glsl"
+#define STOCHASTIC_SET 0
+#define STOCHASTIC_BINDING 2
+#include "../stochastic_common.glsl"
+#include "../area_light_common.glsl"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D gDepth;
+layout(set = 0, binding = 1) uniform sampler2D gNormal;
+layout(set = 0, binding = 3, rgba16f) uniform image2D uLocalShadowOut;
+
+layout(std430, set = 0, binding = 4) readonly buffer AuxiliaryTileWork
+{
+    uint groupCountX;
+    uint groupCountY;
+    uint groupCountZ;
+    uint _tileHeaderPad;
+    uvec2 tileCoords[];
+} tileWork;
+
+layout(set = 1, binding = 0) readonly buffer Lights {
+    AreaLightGpu lights[];
+};
+
+layout(set = VOXEL_SET, binding = 2) uniform usampler3D uVoxelTex;
+
+layout(push_constant) uniform PC
+{
+    mat4 invViewProj;
+    vec4 camPos;
+    ivec2 resolution;
+    uint volumeCount;
+    uint frameIndex;
+    float maxShadowDist;
+    float normalBias;
+    int maxStepsPerVolume;
+    int shadowEnabled;
+    uint volumeIndex;
+    uint lightCount;
+    uint slotCount;
+    uint _pad0;
+    uvec4 lightSlots;
+} pc;
+
+vec3 reconstructWorldPos(vec2 uv, float depth)
+{
+    vec4 clip = vec4(uv * 2.0 - 1.0, depth, 1.0);
+    vec4 world = pc.invViewProj * clip;
+    return world.xyz / world.w;
+}
+
+bool testVolumeOcclusion(vec3 worldOrigin, vec3 worldDir, uint volumeIndex,
+                         float maxWorldDist)
+{
+    VolumeGpu vol = gVolumes[volumeIndex];
+
+    vec3 localOrigin = (vol.localFromWorld * vec4(worldOrigin, 1.0)).xyz;
+    // preserve the parameter conversion before normalizing the local ray.
+    // this is direction-dependent for nonuniform scale.
+    vec3 localDirUnnormalized =
+        (vol.localFromWorld * vec4(worldDir, 0.0)).xyz;
+    float localPerWorld = length(localDirUnnormalized);
+    if (!(localPerWorld > 1e-5))
+    {
+        return false;
+    }
+    vec3 localDir = localDirUnnormalized / localPerWorld;
+    float maxLocalDist = max(maxWorldDist, 0.0) * localPerWorld;
+
+    vec3 traceMin;
+    vec3 traceMax;
+    if (!volumeLocalTraceBounds(vol, 1, traceMin, traceMax))
+    {
+        return false;
+    }
+    vec2 tNearFar = intersectAABB(localOrigin, localDir, traceMin, traceMax);
+    if (tNearFar.x > tNearFar.y || tNearFar.y < 0.0)
+    {
+        return false;
+    }
+
+    float tStart = max(tNearFar.x, 0.0);
+    float tEnd = min(tNearFar.y, maxLocalDist);
+    if (tStart >= tEnd)
+    {
+        return false;
+    }
+
+    vec3 entryLocal = localOrigin + localDir * tStart;
+    return traceDDAOcclusion(uVoxelTex, entryLocal, localDir, vol, tEnd - tStart,
+                             pc.maxStepsPerVolume);
+}
+
+void main()
+{
+    uvec2 tileCoord = tileWork.tileCoords[gl_WorkGroupID.x];
+    ivec2 pixelPos =
+        ivec2(tileCoord * gl_WorkGroupSize.xy + gl_LocalInvocationID.xy);
+    if (pixelPos.x >= pc.resolution.x || pixelPos.y >= pc.resolution.y)
+    {
+        return;
+    }
+
+    vec4 existing = imageLoad(uLocalShadowOut, pixelPos);
+    if (all(lessThanEqual(existing, vec4(0.0))))
+    {
+        return;
+    }
+
+    vec2 uv = (vec2(pixelPos) + 0.5) / vec2(pc.resolution);
+    float depth = texture(gDepth, uv).r;
+    if (depth >= 0.9999)
+    {
+        imageStore(uLocalShadowOut, pixelPos, vec4(1.0));
+        return;
+    }
+
+    if (pc.volumeIndex >= pc.volumeCount || pc.slotCount == 0u)
+    {
+        return;
+    }
+
+    vec3 worldPos = reconstructWorldPos(uv, depth);
+    vec3 normal = normalize(texture(gNormal, uv).rgb * 2.0 - 1.0);
+    vec3 biasedOrigin = worldPos + normal * pc.normalBias;
+
+    uint maxSlots = min(pc.slotCount, 4u);
+    vec4 outShadow = existing;
+
+    for (uint slot = 0u; slot < maxSlots; ++slot)
+    {
+        if (outShadow[slot] <= 0.0)
+        {
+            continue;
+        }
+
+        uint lightIndex = pc.lightSlots[slot];
+        if (lightIndex >= pc.lightCount)
+        {
+            continue;
+        }
+
+        AreaLightGpu light = lights[lightIndex];
+        float influence = max(light.posRadius.w, 0.001);
+        float centerDist = length(light.posRadius.xyz - worldPos);
+        if (centerDist > influence)
+        {
+            continue;
+        }
+
+        vec2 baseNoise = stochasticNoise2D(pixelPos, pc.frameIndex);
+        vec2 noise = fract(baseNoise + vec2(float(slot) * 0.6180339, float(slot) * 0.3819660));
+        vec3 lightSamplePoint = sampleLightPoint(light, noise);
+        vec3 toLight = lightSamplePoint - biasedOrigin;
+        float lightDist = length(toLight);
+        if (lightDist < 0.001)
+        {
+            continue;
+        }
+
+        vec3 shadowDir = toLight / lightDist;
+        if (dot(normal, shadowDir) <= 0.0)
+        {
+            continue;
+        }
+
+        float traceDist = min(lightDist, pc.maxShadowDist);
+        bool occluded = testVolumeOcclusion(biasedOrigin, shadowDir, pc.volumeIndex, traceDist);
+        float shadow = occluded ? 0.0 : 1.0;
+        outShadow[slot] = min(outShadow[slot], shadow);
+    }
+
+    imageStore(uLocalShadowOut, pixelPos, outShadow);
+}

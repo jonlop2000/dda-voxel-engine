@@ -1,0 +1,108 @@
+{
+  "shader_includes": [
+    "voxel/palette.glsl",
+    "voxel/hierarchy.glsl",
+    "voxel_volume.glsl",
+    "voxel/dda_common.glsl",
+    "voxel/terrain_shadow_columns.glsl",
+    "voxel/water_common.glsl",
+    "water_volume_shape.glsl",
+    "water_waves.glsl",
+    "stochastic_common.glsl",
+    "area_light_common.glsl",
+    "painted_sky.glsl",
+    "painted_clouds.glsl"
+  ],
+  "shaders": [
+    { "source": "fullscreen.vert", "output": "fullscreen.vert.spv" },
+    { "source": "gbuffer.vert", "output": "gbuffer.vert.spv" },
+    { "source": "gbuffer.frag", "output": "gbuffer.frag.spv" },
+    { "source": "foliage.vert", "output": "foliage.vert.spv", "required": false },
+    { "source": "foliage.frag", "output": "foliage.frag.spv", "required": false },
+    { "source": "composite_gbuffer.frag", "output": "composite_gbuffer.frag.spv" },
+    { "source": "lighting_multi.frag", "output": "lighting_multi.frag.spv" },
+    { "source": "bloom_extract.frag", "output": "bloom_extract.frag.spv" },
+    { "source": "bloom_blur.frag", "output": "bloom_blur.frag.spv" },
+    { "source": "shadow.vert", "output": "shadow.vert.spv" },
+    { "source": "shadow.frag", "output": "shadow.frag.spv" },
+    { "source": "water.vert", "output": "water.vert.spv" },
+    { "source": "water.frag", "output": "water.frag.spv" },
+    { "source": "water_v2.frag", "output": "water_v2.frag.spv" },
+    { "source": "water_body.frag", "output": "water_body.frag.spv" },
+    { "source": "water_volume_prepass.frag", "output": "water_volume_prepass.frag.spv" },
+    { "source": "water_copy.frag", "output": "water_copy.frag.spv" },
+    { "source": "glass_backdepth.vert", "output": "glass_backdepth.vert.spv" },
+    { "source": "glass_backdepth.frag", "output": "glass_backdepth.frag.spv" },
+    { "source": "glass_shade.vert", "output": "glass_shade.vert.spv" },
+    { "source": "glass_shade.frag", "output": "glass_shade.frag.spv" },
+    { "source": "glass_copy.frag", "output": "glass_copy.frag.spv" },
+    { "source": "voxel_glass_refract.frag", "output": "voxel_glass_refract.frag.spv" },
+    { "source": "taa.vert", "output": "taa.vert.spv" },
+    { "source": "taa.frag", "output": "taa.frag.spv" },
+    { "source": "spatial_upscale.frag", "output": "spatial_upscale.frag.spv" },
+    { "source": "ui.vert", "output": "ui.vert.spv" },
+    { "source": "ui_quad.frag", "output": "ui_quad.frag.spv" },
+    { "source": "voxel/obb.vert", "output": "obb.vert.spv" },
+    { "source": "voxel/obb.vert", "output": "obb_shared_aligned.vert.spv", "define": "OBB_SHARED_ALIGNED_LAYERS=1" },
+    { "source": "voxel/obb_fullscreen.vert", "output": "obb_fullscreen.vert.spv" },
+    { "source": "voxel/obb.frag", "output": "obb.frag.spv" },
+    { "source": "voxel/obb_dda.frag", "output": "obb_dda.frag.spv" },
+    { "source": "voxel/obb_dda.frag", "output": "obb_dda_hot.frag.spv", "define": "DDA_POST_HIT_CACHE=1" },
+    { "source": "voxel/obb_dda.frag", "output": "obb_dda_opaque.frag.spv", "define": "DDA_OPAQUE_ONLY=1" },
+    { "source": "voxel/obb_dda.frag", "output": "obb_dda_unwrapped_opaque.frag.spv", "define": "DDA_UNWRAPPED_OPAQUE=1" },
+    { "source": "voxel/obb_dda.frag", "output": "obb_dda_near_clip_safe_opaque.frag.spv", "define": "DDA_NEAR_CLIP_SAFE_OPAQUE=1" },
+    { "source": "voxel/obb_dda.frag", "output": "obb_dda_shared_aligned_opaque.frag.spv", "define": "DDA_SHARED_ALIGNED_LAYERS=1" },
+    { "source": "voxel/obb_dda.frag", "output": "obb_dda_shared_aligned_near_clip.frag.spv", "define": "DDA_SHARED_ALIGNED_LAYERS_NEAR_CLIP=1" },
+    { "source": "voxel/occ_mip0.comp", "output": "occ_mip0.comp.spv" },
+    { "source": "voxel/occ_downsample.comp", "output": "occ_downsample.comp.spv" },
+    { "source": "voxel/occ_jump_mip.comp", "output": "occ_jump_mip.comp.spv" },
+    { "source": "shadow/shadow_ray.comp", "output": "shadow_ray.comp.spv", "required": false },
+    { "source": "shadow/local_light_shadow_ray.comp", "output": "local_light_shadow_ray.comp.spv", "required": false },
+    { "source": "shadow/local_light_shadow_temporal.comp", "output": "local_light_shadow_temporal.comp.spv", "required": false },
+    { "source": "shadow/local_shadow_blur.comp", "output": "local_shadow_blur.comp.spv", "required": false },
+    { "source": "shadow/shadow_denoise.comp", "output": "shadow_denoise.comp.spv", "required": false },
+    { "source": "ao/auxiliary_tile_list.comp", "output": "auxiliary_tile_list.comp.spv", "required": false },
+    { "source": "ao/ao_ray.comp", "output": "ao_ray.comp.spv", "required": false },
+    { "source": "temporal_resolve.comp", "output": "temporal_resolve.comp.spv", "required": false }
+  ],
+  "asset_checks": [
+    {
+      "type": "file",
+      "path": "textures/blue_noise_128_rg.png",
+      "required": true,
+      "description": "Blue noise texture required by shadow and AO passes"
+    },
+    {
+      "type": "file",
+      "path": "ui/fonts/runtime_debug_font.json",
+      "required": true,
+      "description": "Runtime UI debug font metadata required by the UI text smoke path"
+    },
+    {
+      "type": "file",
+      "path": "ui/fonts/runtime_debug_font_msdf.tga",
+      "required": true,
+      "description": "Runtime UI debug font atlas required by the UI text smoke path"
+    },
+    {
+      "type": "extension_search",
+      "directory": "meshes",
+      "extension": ".obj",
+      "required": false,
+      "description": "Optional voxel import mesh source"
+    },
+    {
+      "type": "extension_search",
+      "directory": "textures",
+      "extension": ".png",
+      "required": false,
+      "description": "Optional sample texture content"
+    },
+    {
+      "type": "file",
+      "path": "vox/Test.vox",
+      "required": false,
+      "description": "Optional .vox sample scene content"
+    }
+  ]
+}

@@ -1,0 +1,140 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D uInput;
+layout(set = 0, binding = 1) uniform sampler2D uDepth;
+layout(set = 0, binding = 2) uniform sampler2D uNormal;
+layout(set = 0, binding = 3, r16f) uniform image2D uOutput;
+
+layout(push_constant) uniform PC
+{
+    ivec2 resolution;
+    float depthSigma;
+    float valueSigma;
+    float normalPower;
+    uint radius;
+    float _pad0;
+    float _pad1;
+    float _pad2;
+} pc;
+
+vec3 decodeNormal(vec3 enc)
+{
+    return normalize(enc * 2.0 - 1.0);
+}
+
+void main()
+{
+    ivec2 pixelPos = ivec2(gl_GlobalInvocationID.xy);
+    if (pixelPos.x >= pc.resolution.x || pixelPos.y >= pc.resolution.y)
+    {
+        return;
+    }
+
+    float centerValue = texelFetch(uInput, pixelPos, 0).r;
+    float centerDepth = texelFetch(uDepth, pixelPos, 0).r;
+    if (centerDepth >= 0.9999)
+    {
+        imageStore(uOutput, pixelPos, vec4(centerValue));
+        return;
+    }
+
+    int radius = clamp(int(pc.radius), 0, 2);
+    if (radius == 0)
+    {
+        imageStore(uOutput, pixelPos, vec4(centerValue));
+        return;
+    }
+
+    vec3 centerNormal = decodeNormal(texelFetch(uNormal, pixelPos, 0).xyz);
+    ivec2 maxPos = pc.resolution - ivec2(1);
+
+    float spatialSigma = max(float(radius) * 0.85, 0.85);
+    float spatialSigma2 = spatialSigma * spatialSigma;
+    float depthSigma = max(pc.depthSigma, 1e-5);
+    float valueSigma = max(pc.valueSigma, 1e-4);
+    float normalPower = max(pc.normalPower, 1.0);
+
+    float sum = centerValue;
+    float weightSum = 1.0;
+    float compatibleMin = centerValue;
+    uint compatibleCount = 0u;
+    uint darkerCompatibleCount = 0u;
+    uint edgeNeighborCount = 0u;
+
+    for (int y = -2; y <= 2; ++y)
+    {
+        for (int x = -2; x <= 2; ++x)
+        {
+            if ((x == 0 && y == 0) || abs(x) > radius || abs(y) > radius)
+            {
+                continue;
+            }
+
+            ivec2 samplePos = clamp(pixelPos + ivec2(x, y), ivec2(0), maxPos);
+            float sampleDepth = texelFetch(uDepth, samplePos, 0).r;
+            if (sampleDepth >= 0.9999)
+            {
+                edgeNeighborCount++;
+                continue;
+            }
+
+            float sampleValue = texelFetch(uInput, samplePos, 0).r;
+            vec3 sampleNormal = decodeNormal(texelFetch(uNormal, samplePos, 0).xyz);
+            float normalDot = max(dot(centerNormal, sampleNormal), 0.0);
+            float depthDelta = abs(sampleDepth - centerDepth) / depthSigma;
+
+            bool sameSurface = depthDelta <= 2.5 && normalDot >= 0.90;
+            if (sameSurface)
+            {
+                compatibleMin = min(compatibleMin, sampleValue);
+                compatibleCount++;
+                if (sampleValue + 0.18 < centerValue)
+                {
+                    darkerCompatibleCount++;
+                }
+            }
+            else
+            {
+                edgeNeighborCount++;
+            }
+
+            if (normalDot <= 0.0)
+            {
+                continue;
+            }
+
+            vec2 offset = vec2(x, y);
+            float dist2 = dot(offset, offset);
+            float spatialWeight = exp(-0.5 * dist2 / spatialSigma2);
+
+            float depthWeight = exp(-0.5 * depthDelta * depthDelta);
+
+            float valueDelta = abs(sampleValue - centerValue) / valueSigma;
+            float valueWeight = exp(-0.5 * valueDelta * valueDelta);
+
+            float normalWeight = pow(normalDot, normalPower);
+            float weight = spatialWeight * depthWeight * valueWeight * normalWeight;
+            sum += sampleValue * weight;
+            weightSum += weight;
+        }
+    }
+
+    float filtered = sum / max(weightSum, 1e-4);
+
+    // dda sun shadows can leave isolated false-lit pixels along voxel contact edges.
+    // the bilateral value term intentionally preserves hard shadow boundaries, so clamp only
+    // bright outliers when several same-surface neighbors agree they should be darker and a
+    // nearby depth/normal discontinuity says this is a contact/silhouette region.
+    if (edgeNeighborCount > 0u && compatibleCount >= 2u && darkerCompatibleCount >= 2u)
+    {
+        float centerOutlier = smoothstep(0.20, 0.60, centerValue - compatibleMin);
+        float filteredOutlier = smoothstep(0.18, 0.55, filtered - compatibleMin);
+        float leakWeight = centerOutlier * filteredOutlier;
+        float leakTarget = min(filtered, compatibleMin + 0.10);
+        filtered = mix(filtered, leakTarget, leakWeight * 0.85);
+    }
+
+    imageStore(uOutput, pixelPos, vec4(filtered));
+}

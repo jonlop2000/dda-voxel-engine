@@ -1,0 +1,543 @@
+#version 450
+#extension GL_GOOGLE_include_directive : enable
+
+#include "../voxel/dda_common.glsl"
+#include "../voxel_volume.glsl"
+#define STOCHASTIC_SET 0
+#define STOCHASTIC_BINDING 2
+#include "../stochastic_common.glsl"
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// g-buffer inputs
+layout(set = 0, binding = 0) uniform sampler2D gDepth;
+layout(set = 0, binding = 1) uniform sampler2D gNormal;
+
+// shadow output
+layout(set = 0, binding = 3, r8) uniform image2D uShadowOut;
+
+layout(std430, set = 0, binding = 4) readonly buffer AuxiliaryTileWork
+{
+    uint groupCountX;
+    uint groupCountY;
+    uint groupCountZ;
+    uint _tileHeaderPad;
+    uvec2 tileCoords[];
+} tileWork;
+
+layout(std430, set = 0, binding = 5) buffer TerrainShadowColumnParityMetrics
+{
+    uint comparedRays;
+    uint mismatchedRays;
+    uint candidateOnlyRays;
+    uint referenceOnlyRays;
+    uint firstClaimed;
+    uint firstCandidateOccluded;
+    uint firstReferenceOccluded;
+    uint firstVolumeIndex;
+    uint firstLocalOriginX;
+    uint firstLocalOriginY;
+    uint firstLocalOriginZ;
+    uint firstMaxT;
+    uint firstLocalDirectionX;
+    uint firstLocalDirectionY;
+    uint firstLocalDirectionZ;
+    int firstMaxSteps;
+} terrainShadowColumnParity;
+
+// volume voxel texture (reuse existing VOXEL_SET = 2)
+layout(set = VOXEL_SET, binding = 2) uniform usampler3D uVoxelTex;
+layout(std430, set = VOXEL_SET, binding = 5) readonly buffer TerrainShadowColumns
+{
+    uint topYExclusive[];
+} terrainShadowColumns;
+
+#include "../voxel/terrain_shadow_columns.glsl"
+
+layout(push_constant) uniform PC
+{
+    mat4 invViewProj;
+    vec4 sunDir;          // xyz = direction to sun (normalized), w = angular radius
+    vec4 camPos;
+    ivec2 resolution;
+    uint volumeCount;
+    uint frameIndex;
+    float maxShadowDist;
+    float normalBias;
+    int maxStepsPerVolume;
+    int shadowEnabled;
+    uint volumeIndex;  // current volume being tested
+    float cloudShadowStrength;
+    uint sunSampleCount;
+    float foliageShadowOpacityScale;
+    uint terrainShadowColumnMode;
+} pc;
+
+// reconstruct world position from depth
+vec3 reconstructWorldPos(vec2 uv, float depth)
+{
+    vec4 clip = vec4(uv * 2.0 - 1.0, depth, 1.0);
+    vec4 world = pc.invViewProj * clip;
+    return world.xyz / world.w;
+}
+
+float pixelStyleResponse(float rawStrength)
+{
+    float s = clamp(rawStrength, 0.0, 1.0);
+    return smoothstep(0.02, 0.62, s);
+}
+
+vec2 hash22(vec2 p)
+{
+    vec3 p3 = fract(vec3(p.xyx) * vec3(0.1031, 0.1030, 0.0973));
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.xx + p3.yz) * p3.zy);
+}
+
+vec3 quantizeSurfaceReceiver(vec3 pos, vec3 normal, float density, out vec2 cell)
+{
+    float d = max(density, 0.001);
+    vec3 an = abs(normal);
+
+    if (an.y >= an.x && an.y >= an.z)
+    {
+        cell = floor(pos.xz * d);
+        vec2 center = (cell + vec2(0.5)) / d;
+        return vec3(center.x, pos.y, center.y);
+    }
+
+    if (an.x >= an.z)
+    {
+        cell = floor(pos.zy * d);
+        vec2 center = (cell + vec2(0.5)) / d;
+        return vec3(pos.x, center.y, center.x);
+    }
+
+    cell = floor(pos.xy * d);
+    vec2 center = (cell + vec2(0.5)) / d;
+    return vec3(center.x, center.y, pos.z);
+}
+
+float foliageCellOpacity(PaletteEntry pe)
+{
+    uint shadingModel = uint(pe.pbr0.w + 0.5);
+    if (shadingModel == SHADING_GLASS || shadingModel == SHADING_WATER)
+    {
+        return 0.0;
+    }
+
+    uint materialCategory = uint(pe.extra.w + 0.5);
+    if (materialCategory != MATERIAL_PLANT)
+    {
+        return 0.0;
+    }
+
+    // a single 1-voxel leaf/stem should tint the shadow, not stamp a hard dash.
+    // denser crossed foliage naturally darkens through repeated accumulation.
+    float opacityScale = clamp(pc.foliageShadowOpacityScale, 0.0, 3.0);
+    return 0.18 * opacityScale * clamp(pe.baseColor_alpha.a, 0.0, 1.0);
+}
+
+float traceFoliageTransmittance(vec3 localOrigin, vec3 localDir, VolumeGpu vol, float maxT,
+                                bool skipOriginShell)
+{
+    ivec3 dims = ivec3(vol.dims_palette_flags.xyz);
+    uint paletteId = vol.dims_palette_flags.w;
+    uint flags = vol.misc.x;
+    bool wrapXZ = (flags & FLAG_WRAP_XZ) != 0u;
+
+    vec3 invDir = 1.0 / max(abs(localDir), vec3(0.0001));
+    ivec3 step = ivec3(sign(localDir));
+    ivec3 voxelPos = ivec3(floor(localOrigin));
+    voxelPos = clamp(voxelPos, ivec3(0), dims - 1);
+
+    vec3 tDelta = abs(invDir);
+    vec3 voxelBoundary = vec3(voxelPos) + max(vec3(step), vec3(0.0));
+    vec3 tMax = (voxelBoundary - localOrigin) / localDir;
+    if (localDir.x == 0.0) tMax.x = 1e20;
+    if (localDir.y == 0.0) tMax.y = 1e20;
+    if (localDir.z == 0.0) tMax.z = 1e20;
+
+    float t = 0.0;
+    float transmittance = 1.0;
+    bool seenEmpty = !skipOriginShell;
+
+    for (int i = 0; i < pc.maxStepsPerVolume && t < maxT; ++i)
+    {
+        if (!wrapXZ)
+        {
+            if (any(lessThan(voxelPos, ivec3(0))) || any(greaterThanEqual(voxelPos, dims)))
+            {
+                break;
+            }
+        }
+        else if (voxelPos.y < 0 || voxelPos.y >= dims.y)
+        {
+            break;
+        }
+
+        float nextT = min(tMax.x, min(tMax.y, tMax.z));
+        float segmentLength = max(min(nextT, maxT) - t, 0.0);
+
+        ivec3 samplePos = wrapVoxelCoord(voxelPos, vol);
+        uint voxel = texelFetch(uVoxelTex, samplePos, 0).r;
+        float cellOpacity = 0.0;
+        if (voxel != 0u && segmentLength > 0.0)
+        {
+            cellOpacity = foliageCellOpacity(GetPaletteEntry(paletteId, voxel));
+        }
+
+        if (cellOpacity > 0.0)
+        {
+            if (seenEmpty)
+            {
+                float sigma = -log(max(1.0 - cellOpacity, 0.001));
+                transmittance *= exp(-sigma * segmentLength);
+                if (transmittance < 0.05)
+                {
+                    return transmittance;
+                }
+            }
+        }
+        else
+        {
+            seenEmpty = true;
+        }
+
+        if (tMax.x < tMax.y && tMax.x < tMax.z)
+        {
+            t = tMax.x;
+            tMax.x += tDelta.x;
+            voxelPos.x += step.x;
+        }
+        else if (tMax.y < tMax.z)
+        {
+            t = tMax.y;
+            tMax.y += tDelta.y;
+            voxelPos.y += step.y;
+        }
+        else
+        {
+            t = tMax.z;
+            tMax.z += tDelta.z;
+            voxelPos.z += step.z;
+        }
+    }
+
+    return clamp(transmittance, 0.0, 1.0);
+}
+
+// test shadow ray against a single volume and return transmittance in [0..1].
+// 1.0 = fully lit through this volume, 0.0 = fully blocked by this volume.
+float traceVolumeTransmittance(vec3 worldOrigin, vec3 worldDir, uint volumeIndex,
+                               float maxWorldDist)
+{
+    VolumeGpu vol = gVolumes[volumeIndex];
+
+    // transform the unit world ray to volume-local space without losing the
+    // parameter conversion. a normalized local direction advances in local
+    // units, so world-space distance limits must be multiplied by this scale.
+    vec3 localOrigin = (vol.localFromWorld * vec4(worldOrigin, 1.0)).xyz;
+    vec3 localDirUnnormalized =
+        (vol.localFromWorld * vec4(worldDir, 0.0)).xyz;
+    float localPerWorld = length(localDirUnnormalized);
+    if (!(localPerWorld > 1e-5))
+    {
+        return 1.0;
+    }
+    vec3 localDir = localDirUnnormalized / localPerWorld;
+    float maxLocalDist = max(maxWorldDist, 0.0) * localPerWorld;
+
+    // ray-AABB intersection with occupied bounds. keep one voxel of padding so
+    // traceDDAOcclusion can still observe an empty/transmissive cell before the first
+    // genuine blocker; this preserves its multi-voxel self-shadow skip behavior.
+    vec3 traceMin;
+    vec3 traceMax;
+    if (!volumeLocalTraceBounds(vol, 1, traceMin, traceMax))
+    {
+        return 1.0;
+    }
+    vec2 tNearFar = intersectAABB(localOrigin, localDir, traceMin, traceMax);
+
+    if (tNearFar.x > tNearFar.y || tNearFar.y < 0.0)
+    {
+        return 1.0;  // ray misses volume
+    }
+
+    // clamp to valid range
+    float tStart = max(tNearFar.x, 0.0);
+    float tEnd = min(tNearFar.y, maxLocalDist);
+
+    if (tStart >= tEnd)
+    {
+        return 1.0;
+    }
+
+    const uint flags = vol.misc.x;
+    const uint occlusionMode = vol.misc.z;
+    if (occlusionMode == LIGHTING_OCCLUSION_NONE ||
+        occlusionMode == LIGHTING_OCCLUSION_PROXY)
+    {
+        return 1.0;
+    }
+
+    const bool isCloudVolume = (flags & FLAG_CLOUD) != 0u;
+
+    if ((occlusionMode == LIGHTING_OCCLUSION_TRANSLUCENT_FOLIAGE ||
+         occlusionMode == LIGHTING_OCCLUSION_TRANSLUCENT_MEADOW) &&
+        !isCloudVolume)
+    {
+        vec3 entryLocal = localOrigin + localDir * tStart;
+        return traceFoliageTransmittance(entryLocal, localDir, vol, tEnd - tStart,
+                                         tNearFar.x <= 0.0);
+    }
+
+    // non-cloud volumes keep legacy behavior (binary blocker).
+    if (!isCloudVolume)
+    {
+        vec3 entryLocal = localOrigin + localDir * tStart;
+        bool hasTerrainShadowColumns =
+            (vol.misc.w & VOLUME_FEATURE_TERRAIN_SHADOW_COLUMNS) != 0u;
+        bool useTerrainShadowColumns =
+            pc.terrainShadowColumnMode == 1u && hasTerrainShadowColumns;
+        bool validateTerrainShadowColumns =
+            pc.terrainShadowColumnMode == 2u && hasTerrainShadowColumns;
+        bool occluded;
+        if (validateTerrainShadowColumns)
+        {
+            bool referenceOccluded = traceDDAOcclusion(
+                uVoxelTex, entryLocal, localDir, vol, tEnd - tStart,
+                pc.maxStepsPerVolume);
+            bool candidateOccluded = traceTerrainShadowColumnOcclusion(
+                entryLocal, localDir, ivec3(vol.dims_palette_flags.xyz),
+                tEnd - tStart, pc.maxStepsPerVolume);
+            atomicAdd(terrainShadowColumnParity.comparedRays, 1u);
+            if (referenceOccluded != candidateOccluded)
+            {
+                atomicAdd(terrainShadowColumnParity.mismatchedRays, 1u);
+                if (candidateOccluded)
+                {
+                    atomicAdd(terrainShadowColumnParity.candidateOnlyRays, 1u);
+                }
+                else
+                {
+                    atomicAdd(terrainShadowColumnParity.referenceOnlyRays, 1u);
+                }
+                if (atomicCompSwap(terrainShadowColumnParity.firstClaimed,
+                                   0u, 1u) == 0u)
+                {
+                    terrainShadowColumnParity.firstCandidateOccluded =
+                        candidateOccluded ? 1u : 0u;
+                    terrainShadowColumnParity.firstReferenceOccluded =
+                        referenceOccluded ? 1u : 0u;
+                    terrainShadowColumnParity.firstVolumeIndex = pc.volumeIndex;
+                    terrainShadowColumnParity.firstLocalOriginX =
+                        floatBitsToUint(entryLocal.x);
+                    terrainShadowColumnParity.firstLocalOriginY =
+                        floatBitsToUint(entryLocal.y);
+                    terrainShadowColumnParity.firstLocalOriginZ =
+                        floatBitsToUint(entryLocal.z);
+                    terrainShadowColumnParity.firstMaxT =
+                        floatBitsToUint(tEnd - tStart);
+                    terrainShadowColumnParity.firstLocalDirectionX =
+                        floatBitsToUint(localDir.x);
+                    terrainShadowColumnParity.firstLocalDirectionY =
+                        floatBitsToUint(localDir.y);
+                    terrainShadowColumnParity.firstLocalDirectionZ =
+                        floatBitsToUint(localDir.z);
+                    terrainShadowColumnParity.firstMaxSteps =
+                        pc.maxStepsPerVolume;
+                }
+            }
+            occluded = referenceOccluded;
+        }
+        else if (useTerrainShadowColumns)
+        {
+            occluded = traceTerrainShadowColumnOcclusion(
+                entryLocal, localDir, ivec3(vol.dims_palette_flags.xyz),
+                tEnd - tStart, pc.maxStepsPerVolume);
+        }
+        else
+        {
+            occluded = traceDDAOcclusion(
+                uVoxelTex, entryLocal, localDir, vol, tEnd - tStart,
+                pc.maxStepsPerVolume);
+        }
+        return occluded ? 0.0 : 1.0;
+    }
+
+    // optional fast bypass for artistic zero-strength.
+    if (pc.cloudShadowStrength <= 0.0001)
+    {
+        return 1.0;
+    }
+
+    // cloud volumes use beer-Lambert transmittance accumulation.
+    vec3 entryLocal = localOrigin + localDir * tStart;
+    float maxLocalT = tEnd - tStart;
+
+    ivec3 dims = ivec3(vol.dims_palette_flags.xyz);
+    uint paletteId = vol.dims_palette_flags.w;
+    bool wrapXZ = (flags & FLAG_WRAP_XZ) != 0u;
+
+    vec3 invDir = 1.0 / max(abs(localDir), vec3(0.0001));
+    ivec3 step = ivec3(sign(localDir));
+    ivec3 voxelPos = ivec3(floor(entryLocal));
+    voxelPos = clamp(voxelPos, ivec3(0), dims - 1);
+
+    vec3 tDelta = abs(invDir);
+    vec3 voxelBoundary = vec3(voxelPos) + max(vec3(step), vec3(0.0));
+    vec3 tMax = (voxelBoundary - entryLocal) / localDir;
+    if (localDir.x == 0.0) tMax.x = 1e20;
+    if (localDir.y == 0.0) tMax.y = 1e20;
+    if (localDir.z == 0.0) tMax.z = 1e20;
+
+    float t = 0.0;
+    float transmittance = 1.0;
+    float strength2 = pc.cloudShadowStrength * pc.cloudShadowStrength;
+
+    for (int i = 0; i < pc.maxStepsPerVolume && t < maxLocalT; ++i)
+    {
+        // bounds check (skip for wrapped axes).
+        if (!wrapXZ)
+        {
+            if (any(lessThan(voxelPos, ivec3(0))) || any(greaterThanEqual(voxelPos, dims)))
+            {
+                break;
+            }
+        }
+        else
+        {
+            if (voxelPos.y < 0 || voxelPos.y >= dims.y)
+            {
+                break;
+            }
+        }
+
+        float nextT = min(tMax.x, min(tMax.y, tMax.z));
+        float segmentLength = max(min(nextT, maxLocalT) - t, 0.0);
+
+        ivec3 samplePos = wrapVoxelCoord(voxelPos, vol);
+        uint voxel = texelFetch(uVoxelTex, samplePos, 0).r;
+        if (voxel != 0u && segmentLength > 0.0)
+        {
+            PaletteEntry pe = GetPaletteEntry(paletteId, voxel);
+            uint shadingModel = uint(pe.pbr0.w + 0.5);
+
+            if (shadingModel != SHADING_GLASS && shadingModel != SHADING_WATER)
+            {
+                float alpha = clamp(pe.baseColor_alpha.a, 0.0, 1.0);
+                float sigma = 0.30 * strength2 * alpha;
+                transmittance *= exp(-sigma * segmentLength);
+
+                if (transmittance < 0.02)
+                {
+                    return transmittance;
+                }
+            }
+        }
+
+        // step to next voxel.
+        if (tMax.x < tMax.y && tMax.x < tMax.z)
+        {
+            t = tMax.x;
+            tMax.x += tDelta.x;
+            voxelPos.x += step.x;
+        }
+        else if (tMax.y < tMax.z)
+        {
+            t = tMax.y;
+            tMax.y += tDelta.y;
+            voxelPos.y += step.y;
+        }
+        else
+        {
+            t = tMax.z;
+            tMax.z += tDelta.z;
+            voxelPos.z += step.z;
+        }
+    }
+
+    return clamp(transmittance, 0.0, 1.0);
+}
+
+vec2 stratifiedSunDiscNoise(vec2 baseNoise, uint sampleIndex, uint sampleCount)
+{
+    // jitterSunDirection maps noise.x through sqrt(), so equal-width strata in
+    // this coordinate are equal-area annuli on the sun disc. blue noise shifts
+    // the radial-bin assignment and rotates the evenly spaced azimuths for each
+    // pixel and frame. unlike unconstrained random samples, every authored ray
+    // owns a distinct radial stratum and cannot cluster with the others.
+    float count = float(max(sampleCount, 1u));
+    float radialPhase = baseNoise.x * count;
+    uint radialShift = min(uint(floor(radialPhase)), sampleCount - 1u);
+    float radialJitter = fract(radialPhase);
+    uint radialBin = (sampleIndex + radialShift) % sampleCount;
+    float radial = (float(radialBin) + radialJitter) / count;
+    float azimuth =
+        fract((float(sampleIndex) + 0.5) / count + baseNoise.y);
+    return vec2(radial, azimuth);
+}
+
+void main()
+{
+    uvec2 tileCoord = tileWork.tileCoords[gl_WorkGroupID.x];
+    ivec2 pixelPos =
+        ivec2(tileCoord * gl_WorkGroupSize.xy + gl_LocalInvocationID.xy);
+
+    if (pixelPos.x >= pc.resolution.x || pixelPos.y >= pc.resolution.y)
+    {
+        return;
+    }
+
+    vec2 uv = (vec2(pixelPos) + 0.5) / vec2(pc.resolution);
+
+    // early out if already occluded from a previous volume
+    float existing = imageLoad(uShadowOut, pixelPos).r;
+    if (existing <= 0.0)
+    {
+        return;
+    }
+
+    // early out for sky pixels
+    float depth = texture(gDepth, uv).r;
+    if (depth >= 0.9999)
+    {
+        imageStore(uShadowOut, pixelPos, vec4(1.0));  // sky is always lit
+        return;
+    }
+
+    // reconstruct world position and normal
+    vec3 worldPos = reconstructWorldPos(uv, depth);
+    vec3 normal = normalize(texture(gNormal, uv).rgb * 2.0 - 1.0);
+
+    // keep the shadow buffer physically stable. the visible pixel-art shadow
+    // styling is applied later in the lighting pass.
+    vec3 biasedOrigin = worldPos + normal * pc.normalBias;
+
+    vec3 sunDir = normalize(pc.sunDir.xyz);
+    float angularRadius = pc.sunDir.w;
+    uint sampleCount = clamp(pc.sunSampleCount, 1u, 12u);
+    vec2 baseNoise = stochasticNoise2D(pixelPos, pc.frameIndex);
+
+    if (pc.volumeIndex >= pc.volumeCount)
+    {
+        return;
+    }
+
+    // average a small sun-cone sample set per pixel to reduce variance before temporal resolve.
+    float transmittanceSum = 0.0;
+    for (uint sampleIdx = 0u; sampleIdx < sampleCount; ++sampleIdx)
+    {
+        vec2 sampleNoise =
+            stratifiedSunDiscNoise(baseNoise, sampleIdx, sampleCount);
+        vec3 sampleDir = (angularRadius > 1e-6)
+                             ? jitterSunDirection(sunDir, angularRadius, sampleNoise)
+                             : sunDir;
+        transmittanceSum +=
+            traceVolumeTransmittance(biasedOrigin, sampleDir, pc.volumeIndex, pc.maxShadowDist);
+    }
+    float volumeTransmittance = transmittanceSum / float(sampleCount);
+    float shadow = clamp(existing * volumeTransmittance, 0.0, 1.0);
+    imageStore(uShadowOut, pixelPos, vec4(shadow));
+}

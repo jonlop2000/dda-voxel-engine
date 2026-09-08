@@ -1,0 +1,40 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D uInput;
+layout(set = 0, binding = 1, rgba16f) uniform image2D uOutput;
+
+layout(push_constant) uniform PC {
+    ivec2 resolution;
+    float sigma;
+    float _pad;
+} pc;
+
+void main() {
+    ivec2 pixelPos = ivec2(gl_GlobalInvocationID.xy);
+    if (pixelPos.x >= pc.resolution.x || pixelPos.y >= pc.resolution.y) {
+        return;
+    }
+
+    float sigma = max(pc.sigma, 0.001);
+    float sigma2 = 2.0 * sigma * sigma;
+
+    vec4 sum = vec4(0.0);
+    float weightSum = 0.0;
+
+    // 5x5 gaussian blur
+    for (int y = -2; y <= 2; ++y) {
+        for (int x = -2; x <= 2; ++x) {
+            float dist2 = float(x * x + y * y);
+            float w = exp(-dist2 / sigma2);
+            ivec2 samplePos = clamp(pixelPos + ivec2(x, y), ivec2(0),
+                                    pc.resolution - ivec2(1));
+            vec4 s = texelFetch(uInput, samplePos, 0);
+            sum += s * w;
+            weightSum += w;
+        }
+    }
+
+    imageStore(uOutput, pixelPos, sum / weightSum);
+}

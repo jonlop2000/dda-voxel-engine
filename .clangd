@@ -1,0 +1,5 @@
+CompileFlags:
+  CompilationDatabase: build/win-msvc-ninja-debug
+  Add:
+    - -Ibuild/win-msvc-ninja-debug/vcpkg_installed/x64-windows/include
+

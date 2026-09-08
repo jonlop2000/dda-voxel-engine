@@ -1,0 +1,46 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+
+layout(binding = 0) uniform usampler3D uOccHierarchy;
+layout(binding = 1, r8ui) uniform uimage3D uMipOne;
+
+const uint HIERARCHY_MATERIAL_MASK = 0x07u;
+const uint JUMP_MIP_SHIFT = 3u;
+
+void main()
+{
+    ivec3 leaf = ivec3(gl_GlobalInvocationID.xyz);
+    ivec3 leafDims = imageSize(uMipOne);
+    if (any(greaterThanEqual(leaf, leafDims)))
+    {
+        return;
+    }
+
+    uint materialMask = imageLoad(uMipOne, leaf).r & HIERARCHY_MATERIAL_MASK;
+    if (materialMask != 0u)
+    {
+        imageStore(uMipOne, leaf, uvec4(materialMask, 0u, 0u, 0u));
+        return;
+    }
+
+    // mip 1 is already proven empty. find its largest empty ancestor once when
+    // the volume is uploaded so each primary ray needs only this mip-1 fetch.
+    uint jumpMip = 1u;
+    int mipCount = textureQueryLevels(uOccHierarchy);
+    for (int candidateMip = mipCount - 1; candidateMip >= 2; --candidateMip)
+    {
+        ivec3 ancestor = leaf >> (candidateMip - 1);
+        uint ancestorMask =
+            texelFetch(uOccHierarchy, ancestor, candidateMip).r &
+            HIERARCHY_MATERIAL_MASK;
+        if (ancestorMask == 0u)
+        {
+            jumpMip = uint(candidateMip);
+            break;
+        }
+    }
+
+    imageStore(uMipOne, leaf,
+               uvec4(jumpMip << JUMP_MIP_SHIFT, 0u, 0u, 0u));
+}

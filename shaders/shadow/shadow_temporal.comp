@@ -1,0 +1,86 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// inputs
+layout(set = 0, binding = 0) uniform sampler2D uShadowCurrent;  // R8 raw
+layout(set = 0, binding = 1) uniform sampler2D uShadowHistory;  // R16F prev
+layout(set = 0, binding = 2) uniform sampler2D uVelocity;       // RGBA16F (velocity.xy, reactive.z)
+layout(set = 0, binding = 3) uniform sampler2D uDepth;          // current depth
+layout(set = 0, binding = 4) uniform sampler2D uDepthHistory;   // prev depth
+
+// output
+layout(set = 0, binding = 5, r16f) uniform image2D uShadowResolved;
+
+layout(push_constant) uniform PC {
+    ivec2 resolution;
+    float blendAlpha;
+    float depthRejectThresh;
+    int resetHistory;
+    int debugMode;  // 0 = normal, 4 = depth rejection mask
+    float _pad0;
+    float _pad1;
+} pc;
+
+void main() {
+    ivec2 pixelPos = ivec2(gl_GlobalInvocationID.xy);
+
+    if (pixelPos.x >= pc.resolution.x || pixelPos.y >= pc.resolution.y) {
+        return;
+    }
+
+    vec2 uv = (vec2(pixelPos) + 0.5) / vec2(pc.resolution);
+
+    float depth = texture(uDepth, uv).r;
+    if (depth >= 0.9999) {
+        imageStore(uShadowResolved, pixelPos, vec4(1.0));
+        return;
+    }
+
+    float currentShadow = texture(uShadowCurrent, uv).r;
+
+    if (pc.resetHistory != 0) {
+        imageStore(uShadowResolved, pixelPos, vec4(currentShadow));
+        return;
+    }
+
+    vec2 velocity = texture(uVelocity, uv).rg;
+    vec2 historyUV = uv - velocity;
+
+    bool validHistory = historyUV.x >= 0.0 && historyUV.x <= 1.0 &&
+                        historyUV.y >= 0.0 && historyUV.y <= 1.0;
+    if (!validHistory) {
+        imageStore(uShadowResolved, pixelPos, vec4(currentShadow));
+        return;
+    }
+
+    float historyShadow = texture(uShadowHistory, historyUV).r;
+    float historyDepth = texture(uDepthHistory, historyUV).r;
+    float depthDiff = abs(depth - historyDepth);
+    bool depthRejected = depthDiff > pc.depthRejectThresh;
+
+    if (pc.debugMode == 4) {
+        float rejection = depthRejected ? 1.0 : 0.0;
+        imageStore(uShadowResolved, pixelPos, vec4(rejection));
+        return;
+    }
+
+    float alpha = depthRejected ? 1.0 : pc.blendAlpha;
+
+    float minShadow = currentShadow;
+    float maxShadow = currentShadow;
+    vec2 texelSize = 1.0 / vec2(pc.resolution);
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            vec2 sampleUV = uv + vec2(x, y) * texelSize;
+            float s = texture(uShadowCurrent, sampleUV).r;
+            minShadow = min(minShadow, s);
+            maxShadow = max(maxShadow, s);
+        }
+    }
+
+    float clampedHistory = clamp(historyShadow, minShadow, maxShadow);
+    float resolved = mix(clampedHistory, currentShadow, alpha);
+
+    imageStore(uShadowResolved, pixelPos, vec4(resolved));
+}

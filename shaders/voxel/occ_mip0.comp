@@ -1,0 +1,41 @@
+#version 450
+#extension GL_GOOGLE_include_directive : enable
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 8) in;
+
+layout(binding = 0) uniform usampler3D uVoxelTex;
+layout(binding = 1, r8ui) uniform uimage3D uOccOut;
+
+#define VOXEL_SET 0
+#define VOXEL_BINDING_PALETTE 2
+#include "palette.glsl"
+#include "hierarchy.glsl"
+
+layout(push_constant) uniform PC {
+    uint paletteId;
+} pc;
+
+void main()
+{
+    ivec3 gid = ivec3(gl_GlobalInvocationID.xyz);
+    ivec3 dims = imageSize(uOccOut);
+    ivec3 srcDims = textureSize(uVoxelTex, 0);
+    if (any(greaterThanEqual(gid, dims)))
+    {
+        return;
+    }
+
+    uint id = 0u;
+    if (all(lessThan(gid, srcDims)))
+    {
+        id = texelFetch(uVoxelTex, gid, 0).r;
+    }
+    uint hierarchyClass = 0u;
+    if (id != 0u)
+    {
+        PaletteEntry entry = GetPaletteEntry(pc.paletteId, id);
+        uint shadingModel = uint(entry.pbr0.w + 0.5);
+        hierarchyClass = voxelHierarchyClassFromShadingModel(shadingModel);
+    }
+    imageStore(uOccOut, gid, uvec4(hierarchyClass, 0u, 0u, 0u));
+}

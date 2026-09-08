@@ -1,0 +1,133 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 24, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "win-msvc-ninja-debug",
+      "displayName": "Windows MSVC Ninja Debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/win-msvc-ninja-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "cl",
+        "CMAKE_CXX_COMPILER": "cl",
+        "CMAKE_LINKER": "link",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_FEATURE_FLAGS": "manifests"
+      }
+    },
+    {
+      "name": "win-msvc-ninja-relwithdebinfo",
+      "displayName": "Windows MSVC Ninja RelWithDebInfo",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/win-msvc-ninja-relwithdebinfo",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "cl",
+        "CMAKE_CXX_COMPILER": "cl",
+        "CMAKE_LINKER": "link",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_FEATURE_FLAGS": "manifests"
+      }
+    },
+    {
+      "name": "win-msvc-ninja-debug-noeditor",
+      "displayName": "Windows MSVC Ninja Debug (No Editor)",
+      "inherits": "win-msvc-ninja-debug",
+      "binaryDir": "${sourceDir}/build/win-msvc-ninja-debug-noeditor",
+      "cacheVariables": {
+        "VOXEL_WITH_EDITOR": "OFF",
+        "VOXEL_WITH_RUNTIME_UI": "ON"
+      }
+    },
+    {
+      "name": "mac-ninja-debug-arm64",
+      "displayName": "macOS Ninja Debug (Apple Silicon)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/mac-ninja-debug-arm64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_TARGET_TRIPLET": "arm64-osx",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "VCPKG_FEATURE_FLAGS": "manifests"
+      }
+    },
+    {
+      "name": "mac-ninja-relwithdebinfo-arm64",
+      "displayName": "macOS Ninja RelWithDebInfo (Apple Silicon)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/mac-ninja-relwithdebinfo-arm64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_TARGET_TRIPLET": "arm64-osx",
+        "CMAKE_OSX_ARCHITECTURES": "arm64",
+        "VCPKG_FEATURE_FLAGS": "manifests"
+      }
+    },
+    {
+      "name": "mac-ninja-debug-arm64-noeditor",
+      "displayName": "macOS Ninja Debug (Apple Silicon, No Editor)",
+      "inherits": "mac-ninja-debug-arm64",
+      "binaryDir": "${sourceDir}/build/mac-ninja-debug-arm64-noeditor",
+      "cacheVariables": {
+        "VOXEL_WITH_EDITOR": "OFF",
+        "VOXEL_WITH_RUNTIME_UI": "ON"
+      }
+    },
+    {
+      "name": "mac-ninja-relwithdebinfo-arm64-noeditor",
+      "displayName": "macOS Ninja RelWithDebInfo (Apple Silicon, No Editor)",
+      "inherits": "mac-ninja-relwithdebinfo-arm64",
+      "binaryDir": "${sourceDir}/build/mac-ninja-relwithdebinfo-arm64-noeditor",
+      "cacheVariables": {
+        "VOXEL_WITH_EDITOR": "OFF",
+        "VOXEL_WITH_RUNTIME_UI": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "build-win-debug", "configurePreset": "win-msvc-ninja-debug" },
+    { "name": "build-win-debug-noeditor", "configurePreset": "win-msvc-ninja-debug-noeditor" },
+    { "name": "build-win-relwithdebinfo", "configurePreset": "win-msvc-ninja-relwithdebinfo" },
+    { "name": "build-mac-debug-arm64", "configurePreset": "mac-ninja-debug-arm64" },
+    { "name": "build-mac-debug-arm64-noeditor", "configurePreset": "mac-ninja-debug-arm64-noeditor" },
+    { "name": "build-mac-relwithdebinfo-arm64", "configurePreset": "mac-ninja-relwithdebinfo-arm64" },
+    { "name": "build-mac-relwithdebinfo-arm64-noeditor", "configurePreset": "mac-ninja-relwithdebinfo-arm64-noeditor" }
+  ],
+  "testPresets": [
+    {
+      "name": "test-win-debug",
+      "configurePreset": "win-msvc-ninja-debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "test-win-debug-noeditor",
+      "configurePreset": "win-msvc-ninja-debug-noeditor",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "test-mac-debug-arm64",
+      "configurePreset": "mac-ninja-debug-arm64",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "test-mac-debug-arm64-noeditor",
+      "configurePreset": "mac-ninja-debug-arm64-noeditor",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

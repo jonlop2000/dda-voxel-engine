@@ -1,0 +1,50 @@
+{
+  "version": 2,
+  "loadTestFloor": false,
+  "loadVoxelWorld": false,
+  "loadOBBVolumes": false,
+  "loadGlassPanel": false,
+  "loadAquariumTest": false,
+  "loadGlassTestScene": false,
+  "loadProceduralWorld": true,
+  "loadVoxelImport": false,
+  "useMeshTankGlass": false,
+  "enableWater": true,
+  "useWaterV2": true,
+  "enableGlass": false,
+  "enablePointLights": true,
+  "loadCloudScene": false,
+  "cloudSeed": 2204,
+  "cloudAltitude": 112.0,
+  "cloudWindSpeed": 0.42,
+  "cloudWindDirection": [
+    0.419,
+    0.908
+  ],
+  "cloudCoverage": 0.32,
+  "cloudScale": 58.0,
+  "cloudShadowStrength": 0.22,
+  "skyPreset": 4,
+  "skyColor": [
+    0.13,
+    0.42,
+    0.76
+  ],
+  "loadStarScene": false,
+  "starSeed": 123,
+  "starAltitude": 150.0,
+  "starDensity": 0.02,
+  "cameraPosition": [
+    0.0,
+    29.0,
+    48.0
+  ],
+  "cameraYaw": 0.0,
+  "cameraPitch": -0.34,
+  "worldSeed": 240414,
+  "worldDimsX": 4,
+  "worldDimsY": 2,
+  "worldDimsZ": 4,
+  "name": "beach_sand_palettes",
+  "description": "Procedural beach with layered dry sand, wet shoreline sand, shell flecks, pebbles, dune grass, and ocean water."
+}

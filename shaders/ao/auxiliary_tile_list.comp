@@ -1,0 +1,53 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D gDepth;
+
+layout(std430, set = 0, binding = 1) buffer AuxiliaryTileWork
+{
+    uint groupCountX;
+    uint groupCountY;
+    uint groupCountZ;
+    uint _tileHeaderPad;
+    uvec2 tileCoords[];
+} tileWork;
+
+layout(push_constant) uniform PC
+{
+    ivec2 resolution;
+    uvec2 _pad;
+} pc;
+
+shared uint tileHasGeometry;
+
+void main()
+{
+    if (gl_LocalInvocationIndex == 0u)
+    {
+        tileHasGeometry = 0u;
+        if (all(equal(gl_WorkGroupID.xy, uvec2(0u))))
+        {
+            tileWork.groupCountY = 1u;
+            tileWork.groupCountZ = 1u;
+        }
+    }
+    barrier();
+
+    ivec2 pixelPos = ivec2(gl_GlobalInvocationID.xy);
+    if (pixelPos.x < pc.resolution.x && pixelPos.y < pc.resolution.y)
+    {
+        vec2 uv = (vec2(pixelPos) + 0.5) / vec2(pc.resolution);
+        if (texture(gDepth, uv).r < 0.9999)
+        {
+            atomicOr(tileHasGeometry, 1u);
+        }
+    }
+    barrier();
+
+    if (gl_LocalInvocationIndex == 0u && tileHasGeometry != 0u)
+    {
+        uint tileIndex = atomicAdd(tileWork.groupCountX, 1u);
+        tileWork.tileCoords[tileIndex] = gl_WorkGroupID.xy;
+    }
+}

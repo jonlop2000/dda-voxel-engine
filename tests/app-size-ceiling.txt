@@ -1,0 +1,3 @@
+# maximum source-file line counts, checked by StructuralRatchet.cmake.
+src/App/App.cpp = 10503
+src/App/App.h = 675

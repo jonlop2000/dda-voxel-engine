@@ -1,0 +1,25 @@
+/build/
+/out/
+/bin/
+/.cache/
+/vcpkg_installed/
+
+CMakeUserPresets.json
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+
+.vs/
+.idea/
+.vscode/
+
+*.sln
+*.vcxproj*
+*.user
+*.log
+
+.DS_Store
+Thumbs.db
+
+# mutable runtime scene state (created and updated by normal app runs)
+/scenes/last_used.json

@@ -1,0 +1,176 @@
+#version 450
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) uniform sampler2D uCurrent;
+layout(set = 0, binding = 1) uniform sampler2D uHistory;
+layout(set = 0, binding = 2) uniform sampler2D uVelocity;
+layout(set = 0, binding = 3) uniform sampler2D uDepth;
+layout(set = 0, binding = 4) uniform sampler2D uNormal;
+layout(set = 0, binding = 5) uniform sampler2D uDepthHistory;
+layout(set = 0, binding = 6, rgba16f) uniform image2D uResolved;
+
+layout(push_constant) uniform PC
+{
+    ivec2 resolution;
+    ivec2 currentResolution;
+    float blendAlpha;
+    float blendAlphaMax;
+    float depthRejectThreshold;
+    float normalRejectDot;
+    float clampSharpness;
+    uint flags;
+    uint debugMode;
+    float _pad0;
+    float _pad1;
+} pc;
+
+const uint FLAG_USE_NORMAL_REJECT = 1u;
+const uint FLAG_USE_NEIGHBORHOOD = 2u;
+const uint FLAG_RESET_HISTORY = 4u;
+const uint FLAG_RECONSTRUCT_CURRENT = 8u;
+
+vec3 decodeNormal(vec3 enc)
+{
+    return normalize(enc * 2.0 - 1.0);
+}
+
+vec4 reconstructCurrent(ivec2 outputPos, float outputDepth, vec3 outputNormal)
+{
+    if ((pc.flags & FLAG_RECONSTRUCT_CURRENT) == 0u)
+    {
+        return texelFetch(uCurrent, outputPos, 0);
+    }
+
+    vec2 sourcePos = ((vec2(outputPos) + 0.5) / vec2(pc.resolution)) *
+                         vec2(pc.currentResolution) -
+                     0.5;
+    ivec2 sourceBase = ivec2(floor(sourcePos));
+    ivec2 sourceMax = pc.currentResolution - ivec2(1);
+    vec4 weightedValue = vec4(0.0);
+    float weightSum = 0.0;
+    vec4 bestValue = vec4(1.0);
+    float bestScore = 1e20;
+    for (int y = 0; y < 2; ++y)
+    {
+        for (int x = 0; x < 2; ++x)
+        {
+            ivec2 sourcePixel = clamp(sourceBase + ivec2(x, y), ivec2(0), sourceMax);
+            vec2 sourceUv = (vec2(sourcePixel) + 0.5) / vec2(pc.currentResolution);
+            float sampleDepth = texture(uDepth, sourceUv).r;
+            vec3 sampleNormal = decodeNormal(texture(uNormal, sourceUv).xyz);
+            float normalDot = max(dot(outputNormal, sampleNormal), 0.0);
+            float depthDelta = abs(sampleDepth - outputDepth) /
+                               max(pc.depthRejectThreshold, 1e-5);
+            float score = depthDelta + (1.0 - normalDot) * 2.0;
+            vec4 sampleValue = texelFetch(uCurrent, sourcePixel, 0);
+            if (score < bestScore)
+            {
+                bestScore = score;
+                bestValue = sampleValue;
+            }
+
+            vec2 distanceToSample = abs(vec2(sourcePixel) - sourcePos);
+            float bilinearWeight = max(1.0 - distanceToSample.x, 0.0) *
+                                   max(1.0 - distanceToSample.y, 0.0);
+            float depthWeight = exp(-0.5 * depthDelta * depthDelta);
+            float normalWeight = pow(normalDot, 24.0);
+            float weight = bilinearWeight * depthWeight * normalWeight;
+            weightedValue += sampleValue * weight;
+            weightSum += weight;
+        }
+    }
+    return weightSum > 1e-5 ? weightedValue / weightSum : bestValue;
+}
+
+void main()
+{
+    ivec2 pixelPos = ivec2(gl_GlobalInvocationID.xy);
+    if (pixelPos.x >= pc.resolution.x || pixelPos.y >= pc.resolution.y)
+    {
+        return;
+    }
+
+    vec2 uv = (vec2(pixelPos) + 0.5) / vec2(pc.resolution);
+    float depth = texture(uDepth, uv).r;
+    if (depth >= 0.9999)
+    {
+        imageStore(uResolved, pixelPos, vec4(1.0));
+        return;
+    }
+
+    vec3 centerNormal = decodeNormal(texture(uNormal, uv).xyz);
+    vec4 current = reconstructCurrent(pixelPos, depth, centerNormal);
+    if ((pc.flags & FLAG_RESET_HISTORY) != 0u)
+    {
+        imageStore(uResolved, pixelPos, current);
+        return;
+    }
+
+    vec2 velocity = texture(uVelocity, uv).rg;
+    vec2 historyUV = uv - velocity;
+    bool validHistory = historyUV.x >= 0.0 && historyUV.x <= 1.0 &&
+                        historyUV.y >= 0.0 && historyUV.y <= 1.0;
+
+    float rejection = validHistory ? 0.0 : 1.0;
+    vec4 history = validHistory ? texture(uHistory, historyUV) : current;
+
+    if (rejection < 1.0)
+    {
+        float historyDepth = texture(uDepthHistory, historyUV).r;
+        if (abs(depth - historyDepth) > pc.depthRejectThreshold)
+        {
+            rejection = 1.0;
+        }
+    }
+
+    if (rejection < 1.0 && (pc.flags & FLAG_USE_NORMAL_REJECT) != 0u)
+    {
+        vec3 n1 = decodeNormal(texture(uNormal, historyUV).xyz);
+        if (dot(centerNormal, n1) < pc.normalRejectDot)
+        {
+            rejection = 1.0;
+        }
+    }
+
+    if (pc.debugMode == 4u)
+    {
+        imageStore(uResolved, pixelPos, vec4(rejection));
+        return;
+    }
+
+    if ((pc.flags & FLAG_USE_NEIGHBORHOOD) != 0u && rejection < 1.0)
+    {
+        vec4 minVal = current;
+        vec4 maxVal = current;
+        for (int y = -1; y <= 1; ++y)
+        {
+            for (int x = -1; x <= 1; ++x)
+            {
+                ivec2 samplePos = clamp(pixelPos + ivec2(x, y), ivec2(0),
+                                        pc.resolution - ivec2(1));
+                vec2 sampleUv = (vec2(samplePos) + 0.5) / vec2(pc.resolution);
+                float sampleDepth = texture(uDepth, sampleUv).r;
+                vec3 sampleNormal = decodeNormal(texture(uNormal, sampleUv).xyz);
+                vec4 s = reconstructCurrent(samplePos, sampleDepth, sampleNormal);
+                minVal = min(minVal, s);
+                maxVal = max(maxVal, s);
+            }
+        }
+
+        if (pc.clampSharpness < 1.0)
+        {
+            vec4 center = (minVal + maxVal) * 0.5;
+            vec4 halfExtent = (maxVal - minVal) * 0.5;
+            halfExtent /= max(pc.clampSharpness, 0.01);
+            minVal = center - halfExtent;
+            maxVal = center + halfExtent;
+        }
+
+        history = clamp(history, minVal, maxVal);
+    }
+
+    float alpha = mix(pc.blendAlpha, pc.blendAlphaMax, rejection);
+    vec4 resolved = mix(history, current, alpha);
+    imageStore(uResolved, pixelPos, resolved);
+}
