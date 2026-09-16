@@ -87,6 +87,7 @@
 #include "engine/scene/NaturePondGlassDome.h"
 #include "engine/scene/NaturePondScene.h"
 #include "engine/scene/LightingParityProbe.h"
+#include "engine/scene/PhysicsSandboxScene.h"
 #include "engine/scene/ProceduralWorldScene.h"
 #include "engine/scene/TankGlassBuilder.h"
 #include "engine/scene/VoxScene.h"
@@ -7883,6 +7884,14 @@ bool App::initVolumeScene()
         else if (sceneConfig().name == "dense_irregular_skip_probe")
         {
             sceneOk = DenseSkipProbeScene::initIrregular(ctx_, voxelWorld_, voxelPalette_);
+        }
+        else if (sceneConfig().name == "physics_sandbox")
+        {
+            sceneOk = PhysicsSandboxScene::init(ctx_, voxelWorld_, voxelPalette_);
+            if (sceneOk) {
+                physicsSandboxBall_ = {2.0,0.0,0.1};
+                physicsSandboxAccumulator_ = 0;
+            }
         }
         else
         {

@@ -181,6 +181,7 @@ add_executable(voxel_aquarium
     src/engine/voxel/Raycast.cpp
     src/engine/voxel/VoxelMesher.cpp
     src/engine/voxel/WorldGen.cpp
+    src/engine/physics/BallPhysics.cpp
     src/engine/scene/SceneCatalog.cpp
     src/engine/scene/SceneConfig.cpp
     src/engine/scene/SceneSerializer.cpp
@@ -200,6 +201,7 @@ add_executable(voxel_aquarium
     src/engine/scene/NaturePondGenerator.cpp
     src/engine/scene/NaturePondScene.cpp
     src/engine/scene/NaturePondSunroofProbe.cpp
+    src/engine/scene/PhysicsSandboxScene.cpp
     src/engine/scene/ProceduralWorldMaterials.cpp
     src/engine/scene/ProceduralWorldScene.cpp
     src/engine/scene/ScenePresentationProfile.cpp

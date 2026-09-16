@@ -23,6 +23,7 @@ namespace engine::scene { struct ScenePresentationProfileReadout; struct WorldSt
 #include "engine/render/RendererConfig.h"
 #include "engine/render/Swapchain.h"
 #include "engine/render/VulkanContext.h"
+#include "engine/physics/BallPhysics.h"
 #include "Resources/LightsBuffer.h"
 #include "Resources/MeshUploadQueue.h"
 #include "UI/Runtime/UiActions.h"
@@ -447,6 +448,8 @@ private:
     engine::VoxelMaterialAtlas voxelMaterialAtlas_{};
     engine::VoxelPalette voxelPalette_{};
     engine::VoxelWorld voxelWorld_{};
+    engine::physics::Ball physicsSandboxBall_{2.0,0.0,0.1}; 
+    double physicsSandboxAccumulator_ = 0;
     engine::WaterVolumeManager waterVolumeMgr_{};
     engine::WaterContainerManager waterContainerMgr_{};
     int cloudVolumeIndex_ = -1;       // index of cloud volume in VoxelWorld (-1 = none)

@@ -1,12 +1,12 @@
 # dda voxel engine
 
-c++ voxel engine using vulkan and dda ray traversal. includes water, lighting,
-an editor, and an aquarium demo with fish care. build presets are included for
+C++ voxel engine using vulkan and dda ray traversal. includes water, lighting,
+an editor, and an aquarium demo. build presets are included for
 windows and apple silicon macs.
 
 ## windows
 
-requires visual studio 2022 with the c++ workload, the vulkan sdk, cmake, ninja,
+Requires visual studio 2022 with the c++ workload, the vulkan sdk, cmake, ninja,
 and vcpkg. set `VCPKG_ROOT` to your vcpkg installation and use the x64 native
 tools command prompt for visual studio.
 
@@ -18,7 +18,7 @@ cmake --build --preset build-win-debug
 
 ## macos
 
-requires an apple silicon mac, xcode command line tools, the vulkan sdk with
+Requires an apple silicon mac, xcode command line tools, the vulkan sdk with
 moltenvk, cmake, ninja, and vcpkg. set `VCPKG_ROOT` and load the vulkan sdk's
 `setup-env.sh` in your shell. make sure cmake and ninja are on `PATH`.
 

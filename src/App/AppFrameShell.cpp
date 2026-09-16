@@ -6,12 +6,14 @@
 #include <cmath>
 
 #include <GLFW/glfw3.h>
+#include <glm/ext/vector_float3.hpp>
 
 #include "App/AppRenderHelpers.h"
 #include "App/AppSceneVolume.h"
 #include "App/ScenePresentationProfileRuntime.h"
 #include "Core/Logger.h"
 #include "engine/game/FoliageCatalog.h"
+#include "engine/physics/BallPhysics.h"
 #include "engine/render/AuxiliaryRayResolution.h"
 #include "engine/render/FrameCharacterization.h"
 #include "engine/render/FrameInputs.h"
@@ -292,6 +294,22 @@ FrameShellInputs App::updateFrame()
     consumePendingCloudBuild();
 
     updateCloudDriftAnimation(animationNow);
+
+    if (sceneConfig().name == "physics_sandbox" &&
+        !voxelDebugSettings_.voxelFreezeTime_)
+    {
+        const double physicsStep = 0.01;
+        const double gravityAcceleration = -9.81;
+
+        physicsSandboxAccumulator_ += dt;
+        while (physicsSandboxAccumulator_ >= physicsStep)
+        {
+            engine::physics::advanceBall(physicsSandboxBall_, gravityAcceleration, physicsStep);
+            physicsSandboxAccumulator_ -= physicsStep;
+        }
+        glm::vec3 volumePosition = {-0.12f, static_cast<float>(physicsSandboxBall_.position - 0.12), -0.12f};
+        voxelWorld_.setInstancePosition(0, volumePosition);
+    }
 
     updateAnimatedObjects(static_cast<float>(animationNow));
     updateGameStateHeartbeat(dt);
