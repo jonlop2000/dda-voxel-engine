@@ -4,8 +4,12 @@
 
 namespace engine::physics {
 
-    void advanceBall(Ball& ball, double acceleration, double deltaTime)
+    void advanceBall(Ball& ball, double acceleration, double deltaTime, double restitution)
     {
+        if (ball.isResting) {
+            return;
+        }
+        const double restSpeedThreshold = 0.1;
         // predict the end of the step using original position and velocity.
         double newPosition = ball.position + ball.velocity * deltaTime
             + 0.5 * acceleration * deltaTime * deltaTime;
@@ -19,7 +23,14 @@ namespace engine::physics {
             double remainingTime = deltaTime - timeToContact;
 
             double contactVelocity = ball.velocity + acceleration * timeToContact;
-            double bounceVelocity = -contactVelocity;
+            double bounceVelocity = -contactVelocity * restitution;
+
+            if (bounceVelocity <= restSpeedThreshold ) {
+                ball.position = ball.radius;
+                ball.isResting = true;
+                ball.velocity = 0.0;
+                return;
+            }
 
             // continue from contact height for the remainder of the same step.
             newPosition = ball.radius + bounceVelocity * remainingTime

@@ -300,11 +300,11 @@ FrameShellInputs App::updateFrame()
     {
         const double physicsStep = 0.01;
         const double gravityAcceleration = -9.81;
-
+        const double restitution = 0.8;
         physicsSandboxAccumulator_ += dt;
         while (physicsSandboxAccumulator_ >= physicsStep)
         {
-            engine::physics::advanceBall(physicsSandboxBall_, gravityAcceleration, physicsStep);
+            engine::physics::advanceBall(physicsSandboxBall_, gravityAcceleration, physicsStep, restitution);
             physicsSandboxAccumulator_ -= physicsStep;
         }
         glm::vec3 volumePosition = {-0.12f, static_cast<float>(physicsSandboxBall_.position - 0.12), -0.12f};
