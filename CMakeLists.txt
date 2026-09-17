@@ -909,6 +909,23 @@ endif()
 add_test(NAME sunroof_ground_foliage_tests
          COMMAND sunroof_ground_foliage_tests)
 
+add_executable(ball_physics_tests
+    tests/BallPhysicsTests.cpp
+    src/engine/physics/BallPhysics.cpp
+)
+
+target_include_directories(ball_physics_tests PRIVATE
+    "${CMAKE_SOURCE_DIR}/src"
+)
+
+if(MSVC)
+    target_compile_options(ball_physics_tests PRIVATE /W4 /permissive- /EHsc)
+else()
+    target_compile_options(ball_physics_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+add_test(NAME ball_physics_tests COMMAND ball_physics_tests)
+
 add_executable(water_preset_tests
     tests/WaterPresetTests.cpp
 )
