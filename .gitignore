@@ -23,3 +23,6 @@ Thumbs.db
 
 # mutable runtime scene state (created and updated by normal app runs)
 /scenes/last_used.json
+
+# local physics sandbox notes
+/PHYSICS_SANDBOX.md

@@ -918,6 +918,10 @@ target_include_directories(ball_physics_tests PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
 )
 
+target_link_libraries(ball_physics_tests PRIVATE
+    glm::glm
+)
+
 if(MSVC)
     target_compile_options(ball_physics_tests PRIVATE /W4 /permissive- /EHsc)
 else()

@@ -1,11 +1,13 @@
 #pragma once
 
+#include <glm/vec3.hpp>
+
 namespace engine::physics {
 
 struct Ball
 {
-    double position; // center height in meters
-    double velocity; // m/s
+    glm::dvec3 position; // center position in meters
+    glm::dvec3 velocity; // m/s
     double radius;   // m
     bool isResting = false;
 };

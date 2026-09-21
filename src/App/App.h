@@ -448,7 +448,7 @@ private:
     engine::VoxelMaterialAtlas voxelMaterialAtlas_{};
     engine::VoxelPalette voxelPalette_{};
     engine::VoxelWorld voxelWorld_{};
-    engine::physics::Ball physicsSandboxBall_{2.0,0.0,0.1}; 
+    engine::physics::Ball physicsSandboxBall_{{0.0, 2.0, 0.0}, {1.0, 0.0, 0.0}, 0.1, false};
     double physicsSandboxAccumulator_ = 0;
     engine::WaterVolumeManager waterVolumeMgr_{};
     engine::WaterContainerManager waterContainerMgr_{};

@@ -23,6 +23,8 @@
 #include "engine/scene/AquariumScene.h"
 #include "engine/voxel/VoxelSystem.h"
 #if VOXEL_WITH_EDITOR
+#include <imgui.h>
+
 #include "UI/Editor.h"
 #include "UI/EngineFacade.h"
 #include "UI/Panels/ProfilerOverlay.h"
@@ -248,6 +250,21 @@ FrameShellInputs App::updateFrame()
         {
             ProfilerOverlay::Draw(engineFacade);
         }
+
+        if (sceneConfig().name == "physics_sandbox")
+        {
+            if (ImGui::Begin("Physics Sandbox"))
+            {
+                // display the ball's state with three decimal places for each number.
+                ImGui::Text("Center height: %.3f m", physicsSandboxBall_.position.y);
+                ImGui::Text("Vertical velocity: %.3f m/s", physicsSandboxBall_.velocity.y);
+                // x shows sideways motion using the ball's center position.
+                ImGui::Text("Horizontal position (x): %.3f m", physicsSandboxBall_.position.x);
+                ImGui::Text("Horizontal velocity (x): %.3f m/s", physicsSandboxBall_.velocity.x);
+                ImGui::Text("State: %s", physicsSandboxBall_.isResting ? "Resting" : "Moving");
+            }
+            ImGui::End();
+        }
     }
 #endif
     // input is a control surface; the settings buckets are the values consumed
@@ -307,7 +324,12 @@ FrameShellInputs App::updateFrame()
             engine::physics::advanceBall(physicsSandboxBall_, gravityAcceleration, physicsStep, restitution);
             physicsSandboxAccumulator_ -= physicsStep;
         }
-        glm::vec3 volumePosition = {-0.12f, static_cast<float>(physicsSandboxBall_.position - 0.12), -0.12f};
+        // subtract the 0.12 m center offset on each axis to get the volume's origin.
+        glm::vec3 volumePosition = {
+            static_cast<float>(physicsSandboxBall_.position.x - 0.12),
+            static_cast<float>(physicsSandboxBall_.position.y - 0.12),
+            static_cast<float>(physicsSandboxBall_.position.z - 0.12)
+        };
         voxelWorld_.setInstancePosition(0, volumePosition);
     }
 
