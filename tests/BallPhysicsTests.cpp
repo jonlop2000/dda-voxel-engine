@@ -153,5 +153,71 @@ int main()
         }
     }
     std::cout << "Ball physics z sliding test passed (settled, then 100 sliding updates)\n";
+
+    // the right wall should still rebound after contact at 0.004 seconds.
+    engine::physics::Ball rightWallBall{{4.896, 2.0, 1.0}, {1.0, 0.0, -0.5}, 0.1};
+    engine::physics::advanceBall(rightWallBall, gravityAcceleration, physicsStep, restitution);
+    if (!expectBallState("Right wall impact", rightWallBall,
+                         {4.8952, 1.9995095, 0.995}, {-0.8, -0.0981, -0.5}, false))
+    {
+        return 1;
+    }
+    std::cout << "Ball physics right-wall test passed (contact at 0.004 seconds)\n";
+
+    // reach x = -4.9 at 0.004 seconds, then travel right at 0.8 m/s for 0.006 seconds.
+    engine::physics::Ball leftWallBall{{-4.896, 2.0, 1.0}, {-1.0, 0.0, -0.5}, 0.1};
+    engine::physics::advanceBall(leftWallBall, gravityAcceleration, physicsStep, restitution);
+    if (!expectBallState("Left wall impact", leftWallBall,
+                         {-4.8952, 1.9995095, 0.995}, {0.8, -0.0981, -0.5}, false))
+    {
+        return 1;
+    }
+    std::cout << "Ball physics left-wall test passed (contact at 0.004 seconds)\n";
+
+    // a 0.125 m radius puts contact at -4.875, exactly at the end of this step.
+    // these binary-exact positions and duration avoid rounding around the boundary.
+    engine::physics::Ball largerWallBall{{-4.75, 2.0, 1.0}, {-1.0, 0.0, 0.0}, 0.125};
+    engine::physics::advanceBall(largerWallBall, gravityAcceleration, 0.125, restitution);
+    if (!expectBallState("Left wall contact at step end", largerWallBall,
+                         {-4.875, 1.923359375, 1.0}, {0.8, -1.22625, 0.0}, false))
+    {
+        return 1;
+    }
+    std::cout << "Ball physics left-wall boundary test passed (different radius)\n";
+
+    // the floor's settling branch must save the wall rebound and allow more sliding.
+    engine::physics::Ball slidingWallBall{{-4.896, 0.1, 1.0}, {-1.0, 0.0, -0.5}, 0.1};
+    for (int step = 1; step <= 101; ++step)
+    {
+        engine::physics::advanceBall(slidingWallBall, gravityAcceleration, physicsStep, restitution);
+        // after the impact step, x advances 0.008 m per step and z advances -0.005 m.
+        if (!expectBallState("Left wall impact while sliding", slidingWallBall,
+                             {-4.8952 + (step - 1) * 0.008, 0.1, 1.0 - step * 0.005},
+                             {0.8, 0.0, -0.5}, false, step))
+        {
+            return 1;
+        }
+    }
+    std::cout << "Ball physics left-wall sliding test passed (impact, then 100 updates)\n";
+
+    // the floor and wall are both reached at 0.004 seconds; each changes its own axis.
+    engine::physics::Ball cornerBall{{-4.896, 0.12007848, 1.0}, {-1.0, -5.0, -0.5}, 0.1};
+    engine::physics::advanceBall(cornerBall, gravityAcceleration, physicsStep, restitution);
+    if (!expectBallState("Left wall and floor impact", cornerBall,
+                         {-4.8952, 0.124011772, 0.995}, {0.8, 3.972532, -0.5}, false))
+    {
+        return 1;
+    }
+    std::cout << "Ball physics left-wall and floor test passed (simultaneous contact)\n";
+
+    // a ball already moving away from the left wall must keep moving right.
+    engine::physics::Ball leavingWallBall{{-4.9, 2.0, 1.0}, {0.8, 0.0, -0.5}, 0.1};
+    engine::physics::advanceBall(leavingWallBall, gravityAcceleration, physicsStep, restitution);
+    if (!expectBallState("Moving away from left wall", leavingWallBall,
+                         {-4.892, 1.9995095, 0.995}, {0.8, -0.0981, -0.5}, false))
+    {
+        return 1;
+    }
+    std::cout << "Ball physics moving-away test passed (no extra rebound)\n";
     return 0;
 }

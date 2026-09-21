@@ -12,10 +12,35 @@ namespace engine::physics {
         }
         const double restSpeedThreshold = 0.1;
         const glm::dvec3 accelerationVector{0.0, acceleration, 0.0};
+
+        const double rightWallX = 5.0;
+        const double rightWallContactX = rightWallX - ball.radius;
+        const double leftWallX = -5.0;
+        const double leftWallContactX = leftWallX + ball.radius;
+
         // predict the end of the step using original position and velocity.
         glm::dvec3 newPosition = ball.position + ball.velocity * deltaTime
             + 0.5 * accelerationVector * deltaTime * deltaTime;
         glm::dvec3 newVelocity = ball.velocity + accelerationVector * deltaTime;
+
+        if (newPosition.x >= rightWallContactX && newVelocity.x > 0) {
+            double timeToWall = (rightWallContactX - ball.position.x) / ball.velocity.x;
+            double remainingTime = deltaTime - timeToWall;
+
+            double wallBounceVelocity = -ball.velocity.x * restitution;
+            newVelocity.x = wallBounceVelocity;
+            newPosition.x = rightWallContactX + wallBounceVelocity * remainingTime;
+        }
+        else if (newPosition.x <= leftWallContactX && newVelocity.x < 0) {
+            // negative displacement divided by negative velocity gives positive time.
+            double timeToWall = (leftWallContactX - ball.position.x) / ball.velocity.x;
+            double remainingTime = deltaTime - timeToWall;
+
+            // reverse x velocity, then move right for the rest of the step.
+            double wallBounceVelocity = -ball.velocity.x * restitution;
+            newVelocity.x = wallBounceVelocity;
+            newPosition.x = leftWallContactX + wallBounceVelocity * remainingTime;
+        }
 
         if (newPosition.y <= ball.radius && newVelocity.y < 0)
         {
