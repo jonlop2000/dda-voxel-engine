@@ -448,7 +448,9 @@ private:
     engine::VoxelMaterialAtlas voxelMaterialAtlas_{};
     engine::VoxelPalette voxelPalette_{};
     engine::VoxelWorld voxelWorld_{};
-    engine::physics::Ball physicsSandboxBall_{{0.0, 2.0, 0.0}, {1.0, 0.0, 0.0}, 0.1, false};
+    // equal-size balls start at the same height and move toward each other.
+    engine::physics::Ball physicsSandboxBall_{{-0.5, 2.0, 0.0}, {1.0, 0.0, 0.0}, 0.1, false};
+    engine::physics::Ball physicsSandboxBallB_{{0.5, 2.0, 0.0}, {-1.0, 0.0, 0.0}, 0.1, false};
     double physicsSandboxAccumulator_ = 0;
     engine::WaterVolumeManager waterVolumeMgr_{};
     engine::WaterContainerManager waterContainerMgr_{};

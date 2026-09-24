@@ -16,6 +16,41 @@ bool vectorsMatch(const glm::dvec3& actual, const glm::dvec3& expected)
         && std::abs(actual.z - expected.z) < tolerance;
 }
 
+bool expectSignedDistance(const char* testName, const glm::dvec3& position,
+                          const engine::physics::Plane& plane, double expectedDistance)
+{
+    const double actual = engine::physics::signedDistanceToPlane(position, plane);
+    const double tolerance = 1e-9;
+    if (std::abs(actual - expectedDistance) < tolerance)
+    {
+        std::cout << "Plane distance " << testName << " test passed\n";
+        return true;
+    }
+
+    std::cerr << std::setprecision(17) << "Plane distance " << testName << " failed"
+              << "\nDistance (m): expected " << expectedDistance << ", got " << actual << '\n';
+    return false;
+}
+
+bool expectBounceVelocity(const char* testName, const glm::dvec3& velocity,
+                          const glm::dvec3& normal, double restitution,
+                          const glm::dvec3& expectedVelocity)
+{
+    const glm::dvec3 actual = engine::physics::calculateBounceVelocity(velocity, normal, restitution);
+    if (vectorsMatch(actual, expectedVelocity))
+    {
+        std::cout << "Bounce velocity " << testName << " test passed\n";
+        return true;
+    }
+
+    // show which components differ from the expected bounce.
+    std::cerr << std::setprecision(17) << "Bounce velocity " << testName << " failed"
+              << "\nVelocity (m/s): expected ("
+              << expectedVelocity.x << ", " << expectedVelocity.y << ", " << expectedVelocity.z
+              << "), got (" << actual.x << ", " << actual.y << ", " << actual.z << ")\n";
+    return false;
+}
+
 bool expectBallState(const char* testName, const engine::physics::Ball& ball,
                      const glm::dvec3& expectedPosition,
                      const glm::dvec3& expectedVelocity, bool expectedResting,
@@ -52,6 +87,83 @@ int main()
     const double gravityAcceleration = -9.81;
     const double physicsStep = 0.01;
     const double restitution = 0.8;
+
+    const engine::physics::Plane rightWall{{5.0, 0.0, 0.0}, {-1.0, 0.0, 0.0}};
+    // the center is 0.3 m from the wall, regardless of its y and z coordinates.
+    if (!expectSignedDistance("allowed side", {4.7, 2.0, -3.0}, rightWall, 0.3))
+    {
+        return 1;
+    }
+    if (!expectSignedDistance("on the plane", {5.0, 2.0, -3.0}, rightWall, 0.0))
+    {
+        return 1;
+    }
+    // crossing the plane must change the sign of the distance.
+    if (!expectSignedDistance("opposite side", {5.2, 2.0, -3.0}, rightWall, -0.2))
+    {
+        return 1;
+    }
+    // this floor is raised to y = 1.5; the position is 0.5 m above it.
+    const engine::physics::Plane raisedFloor{{0.0, 1.5, 0.0}, {0.0, 1.0, 0.0}};
+    if (!expectSignedDistance("raised floor", {2.0, 2.0, -3.0}, raisedFloor, 0.5))
+    {
+        return 1;
+    }
+    // the angled plane is 0.6*y + 0.8*z = 3.6; x runs parallel to it.
+    // this position gives 4.6 on the left, so its signed distance is 1 m.
+    const engine::physics::Plane angledPlane{{1.0, 2.0, 3.0}, {0.0, 0.6, 0.8}};
+    if (!expectSignedDistance("angled plane", {8.0, 1.0, 5.0}, angledPlane, 1.0))
+    {
+        return 1;
+    }
+
+    // each surface reverses its incoming normal motion and preserves tangential motion.
+    if (!expectBounceVelocity("right wall", {1.0, 2.0, 0.0}, {-1.0, 0.0, 0.0}, restitution,
+                              {-0.8, 2.0, 0.0}))
+    {
+        return 1;
+    }
+    if (!expectBounceVelocity("left wall", {-1.0, 2.0, -0.5}, {1.0, 0.0, 0.0}, restitution,
+                              {0.8, 2.0, -0.5}))
+    {
+        return 1;
+    }
+    if (!expectBounceVelocity("floor", {2.0, -5.0, -3.0}, {0.0, 1.0, 0.0}, restitution,
+                              {2.0, 4.0, -3.0}))
+    {
+        return 1;
+    }
+
+    // (0.6, 0.8, 0) is a unit normal; an angled bounce changes both x and y.
+    if (!expectBounceVelocity("angled surface", {0.0, -5.0, 2.0}, {0.6, 0.8, 0.0}, restitution,
+                              {4.32, 0.76, 2.0}))
+    {
+        return 1;
+    }
+    // zero restitution removes normal motion, but the ball can still slide.
+    if (!expectBounceVelocity("zero restitution", {0.0, -5.0, 2.0}, {0.6, 0.8, 0.0}, 0.0,
+                              {2.4, -1.8, 2.0}))
+    {
+        return 1;
+    }
+    // full restitution reverses normal motion without reducing its speed.
+    if (!expectBounceVelocity("full restitution", {0.0, -5.0, 2.0}, {0.6, 0.8, 0.0}, 1.0,
+                              {4.8, 1.4, 2.0}))
+    {
+        return 1;
+    }
+
+    // moving away from or parallel to the surface should leave velocity unchanged.
+    if (!expectBounceVelocity("moving away", {1.0, 2.0, -3.0}, {0.0, 1.0, 0.0}, restitution,
+                              {1.0, 2.0, -3.0}))
+    {
+        return 1;
+    }
+    if (!expectBounceVelocity("parallel motion", {1.0, 0.0, -3.0}, {0.0, 1.0, 0.0}, restitution,
+                              {1.0, 0.0, -3.0}))
+    {
+        return 1;
+    }
 
     engine::physics::Ball ball{{0.0, 2.0, 0.0}, {0.0, 0.0, 0.0}, 0.1};
     // simulate 0.5 seconds without needing a renderer.

@@ -321,16 +321,26 @@ FrameShellInputs App::updateFrame()
         physicsSandboxAccumulator_ += dt;
         while (physicsSandboxAccumulator_ >= physicsStep)
         {
+            // advance both balls to the same moment before checking their contact.
             engine::physics::advanceBall(physicsSandboxBall_, gravityAcceleration, physicsStep, restitution);
+            engine::physics::advanceBall(physicsSandboxBallB_, gravityAcceleration, physicsStep, restitution);
+            engine::physics::resolveBallCollision(physicsSandboxBall_, physicsSandboxBallB_, restitution);
             physicsSandboxAccumulator_ -= physicsStep;
         }
-        // subtract the 0.12 m center offset on each axis to get the volume's origin.
-        glm::vec3 volumePosition = {
+        // subtract the 0.12 m center offset on each axis to get each volume's origin.
+        const glm::vec3 volumePositionA = {
             static_cast<float>(physicsSandboxBall_.position.x - 0.12),
             static_cast<float>(physicsSandboxBall_.position.y - 0.12),
             static_cast<float>(physicsSandboxBall_.position.z - 0.12)
         };
-        voxelWorld_.setInstancePosition(0, volumePosition);
+        const glm::vec3 volumePositionB = {
+            static_cast<float>(physicsSandboxBallB_.position.x - 0.12),
+            static_cast<float>(physicsSandboxBallB_.position.y - 0.12),
+            static_cast<float>(physicsSandboxBallB_.position.z - 0.12)
+        };
+        // these indices match SphereA and SphereB in PhysicsSandboxScene.
+        voxelWorld_.setInstancePosition(0, volumePositionA);
+        voxelWorld_.setInstancePosition(1, volumePositionB);
     }
 
     updateAnimatedObjects(static_cast<float>(animationNow));
