@@ -182,6 +182,7 @@ add_executable(voxel_aquarium
     src/engine/voxel/VoxelMesher.cpp
     src/engine/voxel/WorldGen.cpp
     src/engine/physics/BallPhysics.cpp
+    src/engine/physics/PhysicsSandbox.cpp
     src/engine/scene/SceneCatalog.cpp
     src/engine/scene/SceneConfig.cpp
     src/engine/scene/SceneSerializer.cpp
@@ -929,6 +930,42 @@ else()
 endif()
 
 add_test(NAME ball_physics_tests COMMAND ball_physics_tests)
+
+add_executable(ball_friction_tests
+    tests/BallFrictionTests.cpp
+    src/engine/physics/BallPhysics.cpp
+)
+
+target_include_directories(ball_friction_tests PRIVATE "${CMAKE_SOURCE_DIR}/src")
+target_link_libraries(ball_friction_tests PRIVATE glm::glm)
+
+if(MSVC)
+    target_compile_options(ball_friction_tests PRIVATE /W4 /permissive- /EHsc)
+else()
+    target_compile_options(ball_friction_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+add_test(NAME ball_friction_tests COMMAND ball_friction_tests)
+
+add_executable(physics_sandbox_tests
+    tests/PhysicsSandboxTests.cpp
+    src/engine/physics/PhysicsSandbox.cpp
+    src/engine/physics/BallPhysics.cpp
+)
+
+target_include_directories(physics_sandbox_tests PRIVATE
+    "${CMAKE_SOURCE_DIR}/src"
+)
+
+target_link_libraries(physics_sandbox_tests PRIVATE glm::glm)
+
+if(MSVC)
+    target_compile_options(physics_sandbox_tests PRIVATE /W4 /permissive- /EHsc)
+else()
+    target_compile_options(physics_sandbox_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+add_test(NAME physics_sandbox_tests COMMAND physics_sandbox_tests)
 
 add_executable(water_preset_tests
     tests/WaterPresetTests.cpp

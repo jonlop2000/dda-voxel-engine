@@ -1,5 +1,9 @@
 #pragma once
 
+#include <vector>
+
+#include "engine/physics/BallPhysics.h"
+
 struct VulkanContext;
 
 namespace engine
@@ -11,5 +15,8 @@ namespace engine
 class PhysicsSandboxScene
 {
     public:
-        static bool init(VulkanContext& ctx, engine::VoxelWorld&, engine::VoxelPalette& palette);
+        // Read starting positions without copying or modifying the simulation's balls.
+        static bool init(VulkanContext& ctx, engine::VoxelWorld& world,
+                         engine::VoxelPalette& palette,
+                         const std::vector<engine::physics::Ball>& balls);
 };

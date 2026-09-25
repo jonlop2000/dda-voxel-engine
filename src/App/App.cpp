@@ -7887,12 +7887,10 @@ bool App::initVolumeScene()
         }
         else if (sceneConfig().name == "physics_sandbox")
         {
-            sceneOk = PhysicsSandboxScene::init(ctx_, voxelWorld_, voxelPalette_);
+            physicsSandbox_.reset();
+            sceneOk = PhysicsSandboxScene::init(ctx_, voxelWorld_, voxelPalette_, physicsSandbox_.balls());
             if (sceneOk) {
-                // restore both starting states whenever the sandbox is loaded.
-                physicsSandboxBall_ = {{-0.5, 2.0, 0.0}, {1.0, 0.0, 0.0}, 0.1, false};
-                physicsSandboxBallB_ = {{0.5, 2.0, 0.0}, {-1.0, 0.0, 0.0}, 0.1, false};
-                physicsSandboxAccumulator_ = 0;
+                physicsSandbox_.setPaused(false);
             }
         }
         else

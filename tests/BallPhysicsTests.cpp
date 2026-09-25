@@ -88,6 +88,93 @@ int main()
     const double physicsStep = 0.01;
     const double restitution = 0.8;
 
+    // Report an impact once, while keeping the existing impulse and overlap correction.
+    engine::physics::Ball impactA{{0.0, 2.0, 0.0}, {1.0, 0.0, 0.0}, 0.1};
+    engine::physics::Ball impactB{{0.19, 2.0, 0.0}, {-1.0, 0.0, 0.0}, 0.1};
+    if (!engine::physics::resolveBallCollision(impactA, impactB, restitution) ||
+        !expectBallState("Reported impact A", impactA, {-0.005, 2.0, 0.0}, {-0.8, 0.0, 0.0}, false) ||
+        !expectBallState("Reported impact B", impactB, {0.195, 2.0, 0.0}, {0.8, 0.0, 0.0}, false) ||
+        engine::physics::resolveBallCollision(impactA, impactB, restitution))
+    {
+        std::cerr << "An impact must report once and preserve the collision response\n";
+        return 1;
+    }
+    // Correcting an overlap without an impulse must not appear as a new hit.
+    engine::physics::Ball stationaryA{{0.0, 2.0, 0.0}, {0.0, 0.0, 0.0}, 0.1};
+    engine::physics::Ball stationaryB{{0.15, 2.0, 0.0}, {0.0, 0.0, 0.0}, 0.1};
+    if (engine::physics::resolveBallCollision(stationaryA, stationaryB, restitution) ||
+        !expectBallState("Stationary overlap A", stationaryA, {-0.025, 2.0, 0.0}, {0.0, 0.0, 0.0}, false) ||
+        !expectBallState("Stationary overlap B", stationaryB, {0.175, 2.0, 0.0}, {0.0, 0.0, 0.0}, false))
+    {
+        std::cerr << "Stationary overlap correction must not report an impact\n";
+        return 1;
+    }
+    engine::physics::Ball separatingA{{0.0, 2.0, 0.0}, {-1.0, 0.0, 0.0}, 0.1};
+    engine::physics::Ball separatingB{{0.19, 2.0, 0.0}, {1.0, 0.0, 0.0}, 0.1};
+    if (engine::physics::resolveBallCollision(separatingA, separatingB, restitution) ||
+        !expectBallState("Separating overlap A", separatingA, {-0.005, 2.0, 0.0}, {-1.0, 0.0, 0.0}, false) ||
+        !expectBallState("Separating overlap B", separatingB, {0.195, 2.0, 0.0}, {1.0, 0.0, 0.0}, false))
+    {
+        std::cerr << "Separating overlap correction must not report an impact\n";
+        return 1;
+    }
+    engine::physics::Ball distantA{{0.0, 2.0, 0.0}, {1.0, 0.0, 0.0}, 0.1};
+    engine::physics::Ball distantB{{1.0, 2.0, 0.0}, {-1.0, 0.0, 0.0}, 0.1};
+    if (engine::physics::resolveBallCollision(distantA, distantB, restitution))
+    {
+        std::cerr << "Separated balls must not report an impact\n";
+        return 1;
+    }
+    std::cout << "Ball collision reporting tests passed (impacts, repeated contact, overlap, separation)\n";
+
+    // A 0.01 m overlap splits 80/20 for 1 kg versus 4 kg, in either argument order.
+    // Equal 2 kg masses still split it evenly, independent of the absolute mass.
+    struct SeparationCase { double massA, massB, expectedAx, expectedBx; };
+    const SeparationCase separationCases[] = {
+        {1.0, 4.0, -0.008, 0.192},
+        {4.0, 1.0, -0.002, 0.198},
+        {2.0, 2.0, -0.005, 0.195}
+    };
+    for (const auto& example : separationCases)
+    {
+        engine::physics::Ball a{{0.0, 2.0, 0.0}, {0.0, 0.0, 0.0}, 0.1, true, example.massA};
+        engine::physics::Ball b{{0.19, 2.0, 0.0}, {0.0, 0.0, 0.0}, 0.1, true, example.massB};
+        const glm::dvec3 weightedPositionBefore = a.mass * a.position + b.mass * b.position;
+        if (engine::physics::resolveBallCollision(a, b, restitution) ||
+            !expectBallState("Weighted separation A", a, {example.expectedAx, 2.0, 0.0},
+                             {0.0, 0.0, 0.0}, false) ||
+            !expectBallState("Weighted separation B", b, {example.expectedBx, 2.0, 0.0},
+                             {0.0, 0.0, 0.0}, false) ||
+            !vectorsMatch(a.mass * a.position + b.mass * b.position, weightedPositionBefore))
+        {
+            std::cerr << "Mass-weighted correction must remove overlap and preserve center of mass\n";
+            return 1;
+        }
+    }
+    // The correction also follows an angled normal in 3D, not just the x axis.
+    engine::physics::Ball angledA{{0.0, 2.0, 0.0}, {0.0, 0.0, 0.0}, 0.1, false, 1.0};
+    engine::physics::Ball angledB{{0.114, 2.0, 0.152}, {0.0, 0.0, 0.0}, 0.1, false, 4.0};
+    if (engine::physics::resolveBallCollision(angledA, angledB, restitution) ||
+        !expectBallState("Angled weighted separation A", angledA, {-0.0048, 2.0, -0.0064},
+                         {0.0, 0.0, 0.0}, false) ||
+        !expectBallState("Angled weighted separation B", angledB, {0.1152, 2.0, 0.1536},
+                         {0.0, 0.0, 0.0}, false))
+    {
+        std::cerr << "Mass-weighted correction must follow the collision normal\n";
+        return 1;
+    }
+    // An approaching pair receives both the velocity impulse and weighted separation.
+    engine::physics::Ball movingLight{{0.0, 2.0, 0.0}, {1.0, 0.0, 0.0}, 0.1, false, 1.0};
+    engine::physics::Ball stillHeavy{{0.19, 2.0, 0.0}, {0.0, 0.0, 0.0}, 0.1, false, 4.0};
+    if (!engine::physics::resolveBallCollision(movingLight, stillHeavy, restitution) ||
+        !expectBallState("Light ball impact", movingLight, {-0.008, 2.0, 0.0}, {-0.44, 0.0, 0.0}, false) ||
+        !expectBallState("Heavy ball impact", stillHeavy, {0.192, 2.0, 0.0}, {0.36, 0.0, 0.0}, false))
+    {
+        std::cerr << "An unequal-mass impact must apply the impulse and remove overlap\n";
+        return 1;
+    }
+    std::cout << "Ball mass-weighted separation tests passed (mass ratios, center of mass, angled contact, impact)\n";
+
     const engine::physics::Plane rightWall{{5.0, 0.0, 0.0}, {-1.0, 0.0, 0.0}};
     // the center is 0.3 m from the wall, regardless of its y and z coordinates.
     if (!expectSignedDistance("allowed side", {4.7, 2.0, -3.0}, rightWall, 0.3))
@@ -331,5 +418,93 @@ int main()
         return 1;
     }
     std::cout << "Ball physics moving-away test passed (no extra rebound)\n";
+
+    // reach z = 4.9 at 0.004 seconds, then rebound for the remaining 0.006 seconds.
+    engine::physics::Ball frontWallBall{{1.0, 2.0, 4.896}, {-0.5, 0.0, 1.0}, 0.1};
+    engine::physics::advanceBall(frontWallBall, gravityAcceleration, physicsStep, restitution);
+    if (!expectBallState("Front wall impact", frontWallBall,
+                         {0.995, 1.9995095, 4.8952}, {-0.5, -0.0981, -0.8}, false))
+    {
+        return 1;
+    }
+    std::cout << "Ball physics front-wall test passed (contact at 0.004 seconds)\n";
+
+    engine::physics::Ball backWallBall{{1.0, 2.0, -4.896}, {-0.5, 0.0, -1.0}, 0.1};
+    engine::physics::advanceBall(backWallBall, gravityAcceleration, physicsStep, restitution);
+    if (!expectBallState("Back wall impact", backWallBall,
+                         {0.995, 1.9995095, -4.8952}, {-0.5, -0.0981, 0.8}, false))
+    {
+        return 1;
+    }
+    std::cout << "Ball physics back-wall test passed (contact at 0.004 seconds)\n";
+
+    // a different radius changes the contact position; this contact is exactly at step end.
+    engine::physics::Ball largerFrontWallBall{{1.0, 2.0, 4.75}, {0.0, 0.0, 1.0}, 0.125};
+    engine::physics::advanceBall(largerFrontWallBall, gravityAcceleration, 0.125, restitution);
+    if (!expectBallState("Front wall contact at step end", largerFrontWallBall,
+                         {1.0, 1.923359375, 4.875}, {0.0, -1.22625, -0.8}, false))
+    {
+        return 1;
+    }
+    std::cout << "Ball physics front-wall boundary test passed (different radius)\n";
+
+    // moving away must not bounce again; zero normal velocity must not divide by zero.
+    engine::physics::Ball leavingFrontWallBall{{1.0, 2.0, 4.9}, {-0.5, 0.0, -0.8}, 0.1};
+    engine::physics::advanceBall(leavingFrontWallBall, gravityAcceleration, physicsStep, restitution);
+    if (!expectBallState("Moving away from front wall", leavingFrontWallBall,
+                         {0.995, 1.9995095, 4.892}, {-0.5, -0.0981, -0.8}, false))
+    {
+        return 1;
+    }
+    engine::physics::Ball leavingBackWallBall{{1.0, 2.0, -4.9}, {-0.5, 0.0, 0.8}, 0.1};
+    engine::physics::advanceBall(leavingBackWallBall, gravityAcceleration, physicsStep, restitution);
+    if (!expectBallState("Moving away from back wall", leavingBackWallBall,
+                         {0.995, 1.9995095, -4.892}, {-0.5, -0.0981, 0.8}, false))
+    {
+        return 1;
+    }
+    engine::physics::Ball parallelFrontWallBall{{1.0, 2.0, 4.9}, {-0.5, 0.0, 0.0}, 0.1};
+    engine::physics::advanceBall(parallelFrontWallBall, gravityAcceleration, physicsStep, restitution);
+    if (!expectBallState("Parallel to front wall", parallelFrontWallBall,
+                         {0.995, 1.9995095, 4.9}, {-0.5, -0.0981, 0.0}, false))
+    {
+        return 1;
+    }
+    std::cout << "Ball physics z-wall moving-away and parallel tests passed\n";
+
+    // settling on the floor must retain the z rebound and keep the sliding ball awake.
+    engine::physics::Ball slidingBackWallBall{{1.0, 0.1, -4.896}, {0.0, 0.0, -1.0}, 0.1};
+    for (int step = 1; step <= 101; ++step)
+    {
+        engine::physics::advanceBall(slidingBackWallBall, gravityAcceleration, physicsStep, restitution);
+        if (!expectBallState("Back wall impact while sliding", slidingBackWallBall,
+                             {1.0, 0.1, -4.8952 + (step - 1) * 0.008},
+                             {0.0, 0.0, 0.8}, false, step))
+        {
+            return 1;
+        }
+    }
+    std::cout << "Ball physics back-wall sliding test passed (impact, then 100 updates)\n";
+
+    // left wall, front wall, and floor are all reached at 0.004 seconds.
+    engine::physics::Ball threeSurfaceBall{{-4.896, 0.12007848, 4.896}, {-1.0, -5.0, 1.0}, 0.1};
+    engine::physics::advanceBall(threeSurfaceBall, gravityAcceleration, physicsStep, restitution);
+    if (!expectBallState("Three simultaneous surface impacts", threeSurfaceBall,
+                         {-4.8952, 0.124011772, 4.8952}, {0.8, 3.972532, -0.8}, false))
+    {
+        return 1;
+    }
+    std::cout << "Ball physics x/z-wall and floor test passed (simultaneous contact)\n";
+
+    // independent axes can reach surfaces at different times in the same step:
+    // right wall at 0.002 seconds, floor at 0.004, and back wall at 0.008.
+    engine::physics::Ball staggeredSurfaceBall{{4.898, 0.12007848, -4.892}, {1.0, -5.0, -1.0}, 0.1};
+    engine::physics::advanceBall(staggeredSurfaceBall, gravityAcceleration, physicsStep, restitution);
+    if (!expectBallState("Three staggered surface impacts", staggeredSurfaceBall,
+                         {4.8936, 0.124011772, -4.8984}, {-0.8, 3.972532, 0.8}, false))
+    {
+        return 1;
+    }
+    std::cout << "Ball physics x/z-wall and floor test passed (different contact times)\n";
     return 0;
 }

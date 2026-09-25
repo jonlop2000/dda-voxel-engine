@@ -2,10 +2,8 @@
 struct GLFWwindow; namespace engine::render { struct FrameInputs; struct RendererPassResources; class PassRegistry; class VoxelRenderResources; }
 namespace engine::scene { struct ScenePresentationProfileReadout; struct WorldStateView; }
 #include <array>
-#include <chrono>
 #include <cstdint>
 #include <filesystem>
-#include <memory>
 #include <string>
 #include <vector>
 #include "App/AppFrameShell.h"
@@ -23,7 +21,7 @@ namespace engine::scene { struct ScenePresentationProfileReadout; struct WorldSt
 #include "engine/render/RendererConfig.h"
 #include "engine/render/Swapchain.h"
 #include "engine/render/VulkanContext.h"
-#include "engine/physics/BallPhysics.h"
+#include "engine/physics/PhysicsSandbox.h"
 #include "Resources/LightsBuffer.h"
 #include "Resources/MeshUploadQueue.h"
 #include "UI/Runtime/UiActions.h"
@@ -448,10 +446,7 @@ private:
     engine::VoxelMaterialAtlas voxelMaterialAtlas_{};
     engine::VoxelPalette voxelPalette_{};
     engine::VoxelWorld voxelWorld_{};
-    // equal-size balls start at the same height and move toward each other.
-    engine::physics::Ball physicsSandboxBall_{{-0.5, 2.0, 0.0}, {1.0, 0.0, 0.0}, 0.1, false};
-    engine::physics::Ball physicsSandboxBallB_{{0.5, 2.0, 0.0}, {-1.0, 0.0, 0.0}, 0.1, false};
-    double physicsSandboxAccumulator_ = 0;
+    engine::physics::PhysicsSandbox physicsSandbox_;
     engine::WaterVolumeManager waterVolumeMgr_{};
     engine::WaterContainerManager waterContainerMgr_{};
     int cloudVolumeIndex_ = -1;       // index of cloud volume in VoxelWorld (-1 = none)
