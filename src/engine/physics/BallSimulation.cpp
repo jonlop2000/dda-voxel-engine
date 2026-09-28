@@ -1,4 +1,6 @@
 #include "engine/physics/BallSimulation.h"
+#include "engine/physics/BallBroadPhase.h"
+#include "engine/physics/BallSupport.h"
 
 #include <algorithm>
 #include <array>
@@ -14,6 +16,8 @@ namespace {
 constexpr double contactTolerance = 1e-9;
 constexpr double restingNormalSpeed = 1e-7;
 constexpr double floorRestSpeed = 0.1;
+constexpr double restitutionSpeedThreshold = 0.1;
+constexpr double contactTimeStep = 0.005;
 using Polynomial = std::array<long double, 5>;
 
 long double evaluate(const Polynomial& coefficients, int degree, long double x)
@@ -23,8 +27,7 @@ long double evaluate(const Polynomial& coefficients, int degree, long double x)
     return value;
 }
 
-// derivative roots partition a polynomial into monotonic intervals.
-// bisect those intervals instead of using an ill-conditioned closed-form quartic formula.
+// bisect monotonic intervals separated by derivative roots.
 std::vector<long double> rootsInUnitInterval(const Polynomial& coefficients, int degree)
 {
     while (degree > 0 && coefficients[degree] == 0.0L) --degree;
@@ -87,6 +90,12 @@ bool nearContact(const Ball& a, const Ball& b)
     return glm::dot(offset, offset) <= reach * reach;
 }
 
+bool persistentContact(const Ball& a, const Ball& b)
+{
+    return a.radius + b.radius > 0.0 && nearContact(a, b) &&
+        std::abs(glm::dot(b.velocity - a.velocity, contactNormal(a, b))) < restitutionSpeedThreshold;
+}
+
 void resolveBoundaries(Ball& ball, double restitution)
 {
     const double limit = 5.0 - ball.radius;
@@ -114,65 +123,125 @@ void resolveBoundaries(Ball& ball, double restitution)
     ball.isResting = supported(ball) && ball.velocity.x == 0.0 && ball.velocity.z == 0.0;
 }
 
-void resolveContacts(std::vector<Ball>& balls, double time, double restitution,
+void resolveContacts(std::vector<Ball>& balls, double time,
+                     const BallSimulationSettings& settings, BallBroadPhase& broadPhase,
                      std::vector<BallCollisionEvent>& impacts)
 {
-    // repeat simultaneous contacts so a wall response or pair impulse can reach its neighbors.
+    constexpr int maxRebuildsPerPass = 4;
+    // repeat contacts so impulses can propagate to neighboring balls.
     for (int pass = 0; pass < 16; ++pass)
     {
         bool changed = false;
-        for (auto& ball : balls) resolveBoundaries(ball, restitution);
-        for (std::size_t i = 0; i < balls.size(); ++i)
-        {
-            for (std::size_t j = i + 1; j < balls.size(); ++j)
+        for (auto& ball : balls) resolveBoundaries(ball, settings.restitution);
+        bool filtered = settings.useBroadPhase &&
+            broadPhase.findContactCandidates(balls, contactTolerance);
+        const auto resolvePair = [&](std::size_t i, std::size_t j) {
+            auto& a = balls[i];
+            auto& b = balls[j];
+            if (!nearContact(a, b)) return false;
+            const auto oldA = a.position;
+            const auto oldB = b.position;
+            const double approach = -glm::dot(b.velocity - a.velocity, contactNormal(a, b));
+            const double penetration = a.radius + b.radius - glm::length(b.position - a.position);
+            const double slop = std::abs(approach) < restitutionSpeedThreshold ?
+                std::min(1e-6, (a.radius + b.radius) * 1e-6) : 0.0;
+            if (approach <= 0.0 && penetration <= slop) return false;
+            // suppress small rebounds before they become repeated impacts.
+            const double impactRestitution = approach < restitutionSpeedThreshold ? 0.0 : settings.restitution;
+            const bool reportImpact = approach >= restitutionSpeedThreshold;
+            const auto momentumBefore = reportImpact ? a.mass * a.velocity + b.mass * b.velocity : glm::dvec3{0.0};
+            const double energyBefore = reportImpact ?
+                0.5 * (a.mass * glm::dot(a.velocity, a.velocity) +
+                       b.mass * glm::dot(b.velocity, b.velocity)) : 0.0;
+            if (resolveBallCollision(a, b, impactRestitution, contactTolerance))
             {
-                auto& a = balls[i];
-                auto& b = balls[j];
-                if (!nearContact(a, b)) continue;
-                const auto oldA = a.position;
-                const auto oldB = b.position;
-                const double approach = -glm::dot(b.velocity - a.velocity, contactNormal(a, b));
-                // settle numerically tiny rebounds instead of producing an endless contact sequence.
-                const double impactRestitution = approach < restingNormalSpeed ? 0.0 : restitution;
-                const auto momentumBefore = a.mass * a.velocity + b.mass * b.velocity;
-                const double energyBefore = 0.5 * (a.mass * glm::dot(a.velocity, a.velocity) +
-                                                   b.mass * glm::dot(b.velocity, b.velocity));
-                if (resolveBallCollision(a, b, impactRestitution, contactTolerance))
+                // support impulses below the bounce threshold are not new hits.
+                if (reportImpact)
                 {
-                    // only record impacts above the resting-contact speed tolerance.
-                    if (approach >= restingNormalSpeed)
-                    {
-                        impacts.push_back({i, j, time, momentumBefore,
-                            a.mass * a.velocity + b.mass * b.velocity, energyBefore,
-                            0.5 * (a.mass * glm::dot(a.velocity, a.velocity) +
-                                   b.mass * glm::dot(b.velocity, b.velocity)), impactRestitution});
-                    }
-                    changed = true;
+                    impacts.push_back({i, j, time, momentumBefore,
+                        a.mass * a.velocity + b.mass * b.velocity, energyBefore,
+                        0.5 * (a.mass * glm::dot(a.velocity, a.velocity) +
+                               b.mass * glm::dot(b.velocity, b.velocity)), impactRestitution});
                 }
-                changed = changed || a.position != oldA || b.position != oldB;
+                changed = changed || approach >= restingNormalSpeed;
             }
+            // leave submicrometer overlap alone while slow contacts settle.
+            if (penetration <= slop)
+            {
+                a.position = oldA;
+                b.position = oldB;
+            }
+            const bool moved = a.position != oldA || b.position != oldB;
+            changed = changed || moved;
+            return moved;
+        };
+        std::size_t i = 0;
+        std::size_t j = 1;
+        std::size_t candidateIndex = 0;
+        int rebuilds = 0;
+        for (;;)
+        {
+            if (filtered)
+            {
+                if (candidateIndex == broadPhase.pairs().size()) break;
+                const auto pair = broadPhase.pairs()[candidateIndex++];
+                i = pair.first;
+                j = pair.second;
+            }
+            else
+            {
+                if (j >= balls.size()) { ++i; j = i + 1; }
+                if (j >= balls.size()) break;
+            }
+            if (resolvePair(i, j) && filtered)
+            {
+                // fall back after exhausting this pass's rebuild budget.
+                filtered = rebuilds++ < maxRebuildsPerPass &&
+                    broadPhase.findContactCandidates(balls, contactTolerance);
+                if (filtered)
+                {
+                    // resume after this pair to preserve solver order.
+                    const auto& pairs = broadPhase.pairs();
+                    const auto next = std::upper_bound(pairs.begin(), pairs.end(), BallPair{i, j},
+                        [](const BallPair& a, const BallPair& b) {
+                            return a.first < b.first || (a.first == b.first && a.second < b.second);
+                        });
+                    candidateIndex = static_cast<std::size_t>(next - pairs.begin());
+                }
+            }
+            ++j;
         }
         if (!changed) break;
     }
-    for (auto& ball : balls) resolveBoundaries(ball, restitution);
+    for (auto& ball : balls) resolveBoundaries(ball, settings.restitution);
 }
 
 std::vector<glm::dvec3> accelerations(const std::vector<Ball>& balls,
-                                    const BallSimulationSettings& settings)
+                                    const BallSimulationSettings& settings,
+                                    BallBroadPhase& broadPhase, double& contactHorizon)
 {
     std::vector<glm::dvec3> result(balls.size(), {0.0, settings.acceleration, 0.0});
     for (std::size_t i = 0; i < balls.size(); ++i)
     {
         const auto& ball = balls[i];
+        if (ball.isResting)
+        {
+            result[i] = {0.0, 0.0, 0.0};
+            continue;
+        }
         if (!supported(ball)) continue;
         const double speed = std::hypot(ball.velocity.x, ball.velocity.z);
         const double deceleration = settings.floorFriction * std::max(0.0, -settings.acceleration);
         result[i] = speed > 0.0 ? -deceleration * ball.velocity / speed : glm::dvec3{0.0};
     }
-    // resting contacts must resist inward acceleration as well as inward velocity.
+    // positions stay fixed while acceleration constraints converge.
+    const bool filtered = settings.useBroadPhase &&
+        broadPhase.findContactCandidates(balls, contactTolerance);
+    const auto& candidates = broadPhase.pairs();
     for (int pass = 0; pass < 32; ++pass)
     {
         double largestChange = 0.0;
+        std::size_t pairIndex = 0;
         for (std::size_t i = 0; i < balls.size(); ++i)
         {
             const auto& ball = balls[i];
@@ -184,17 +253,35 @@ std::vector<glm::dvec3> accelerations(const std::vector<Ball>& balls,
                 if (ball.position[axis] >= limit - contactTolerance) result[i][axis] = std::min(0.0, result[i][axis]);
                 if (ball.position[axis] <= -limit + contactTolerance) result[i][axis] = std::max(0.0, result[i][axis]);
             }
-            for (std::size_t j = i + 1; j < balls.size(); ++j)
-            {
-                if (!nearContact(ball, balls[j])) continue;
+            const auto constrainPair = [&](std::size_t j) {
+                if (!nearContact(ball, balls[j])) return;
                 const auto normal = contactNormal(ball, balls[j]);
-                if (std::abs(glm::dot(balls[j].velocity - ball.velocity, normal)) > restingNormalSpeed) continue;
+                if (persistentContact(ball, balls[j]) && (!ball.isResting || !balls[j].isResting))
+                {
+                    const double relativeSpeed = glm::length(balls[j].velocity - ball.velocity);
+                    const double distanceLimit = 0.05 * (ball.radius + balls[j].radius);
+                    const double interval = relativeSpeed > 0.0 ?
+                        std::min(contactTimeStep, distanceLimit / relativeSpeed) : contactTimeStep;
+                    contactHorizon = std::min(contactHorizon, interval);
+                }
+                const double normalSpeed = glm::dot(balls[j].velocity - ball.velocity, normal);
+                if (normalSpeed > restingNormalSpeed || normalSpeed < -restitutionSpeedThreshold) return;
                 const double inward = glm::dot(result[j] - result[i], normal);
-                if (inward >= 0.0) continue;
+                if (inward >= 0.0) return;
                 const double correction = -inward / (1.0 / ball.mass + 1.0 / balls[j].mass);
                 result[i] -= correction / ball.mass * normal;
                 result[j] += correction / balls[j].mass * normal;
                 largestChange = std::max(largestChange, -inward);
+            };
+            // preserve the original order of boundary and pair constraints.
+            if (filtered)
+            {
+                while (pairIndex < candidates.size() && candidates[pairIndex].first == i)
+                    constrainPair(candidates[pairIndex++].second);
+            }
+            else
+            {
+                for (std::size_t j = i + 1; j < balls.size(); ++j) constrainPair(j);
             }
         }
         if (largestChange < 1e-10) break;
@@ -216,6 +303,8 @@ double planeContactTime(double gap, double velocity, double acceleration, double
 double pairContactTime(const Ball& a, const Ball& b, const glm::dvec3& accelerationA,
                        const glm::dvec3& accelerationB, double horizon)
 {
+    // existing slow contacts use bounded constraint steps instead of new hits.
+    if (persistentContact(a, b)) return horizon;
     const glm::dvec3 p = b.position - a.position;
     const glm::dvec3 v = b.velocity - a.velocity;
     const glm::dvec3 relativeAcceleration = accelerationB - accelerationA;
@@ -227,7 +316,7 @@ double pairContactTime(const Ball& a, const Ball& b, const glm::dvec3& accelerat
         if (glm::dot(offset, v) < -restingNormalSpeed * glm::length(offset)) return *time;
         return horizon;
     }
-    // different accelerations produce a quartic distance equation; scale time to [0, 1].
+    // scale time to [0, 1] for the quartic from unequal accelerations.
     Polynomial polynomial{};
     const long double radius = a.radius + b.radius;
     polynomial[0] = -radius * radius;
@@ -248,8 +337,7 @@ double pairContactTime(const Ball& a, const Ball& b, const glm::dvec3& accelerat
         const auto offset = p + v * time + 0.5 * relativeAcceleration * time * time;
         const auto velocity = v + relativeAcceleration * time;
         const double distance = glm::length(offset);
-        // a polynomial close to zero must still describe actual geometric contact.
-        // this also rejects a spurious zero-time root for very small spheres.
+        // check geometry to reject false roots, including tiny-sphere cases.
         if (distance <= a.radius + b.radius + contactTolerance &&
             glm::dot(offset, velocity) < -restingNormalSpeed * distance) return time;
     }
@@ -266,12 +354,15 @@ void advanceBallSystem(std::vector<Ball>& balls, double duration, double startTi
     if (!std::isfinite(duration) || duration <= 0.0) return;
     double remaining = duration;
     std::vector<double> stoppingTimes(balls.size());
+    BallBroadPhase broadPhase;
     for (;;)
     {
-        resolveContacts(balls, startTime + duration - remaining, settings.restitution, impacts);
+        resolveContacts(balls, startTime + duration - remaining, settings, broadPhase, impacts);
+        settleSupportedBalls(balls, settings.acceleration, settings.floorFriction,
+                             broadPhase, settings.useBroadPhase);
         if (remaining <= 0.0) break;
-        const auto acceleration = accelerations(balls, settings);
         double segment = remaining;
+        const auto acceleration = accelerations(balls, settings, broadPhase, segment);
         for (std::size_t i = 0; i < balls.size(); ++i)
         {
             const auto& ball = balls[i];
@@ -298,11 +389,21 @@ void advanceBallSystem(std::vector<Ball>& balls, double duration, double startTi
                     ball.velocity[axis], force[axis], remaining));
             }
         }
-        // boundary and stopping events limit how long the current accelerations remain valid.
-        for (std::size_t i = 0; i < balls.size(); ++i)
-            for (std::size_t j = i + 1; j < balls.size(); ++j)
-                segment = std::min(segment, pairContactTime(balls[i], balls[j],
-                    acceleration[i], acceleration[j], segment));
+        // rebuild swept paths after each event that can change motion.
+        if (settings.useBroadPhase && broadPhase.findCandidates(balls, acceleration, segment, contactTolerance))
+        {
+            for (const auto& pair : broadPhase.pairs())
+                segment = std::min(segment, pairContactTime(balls[pair.first], balls[pair.second],
+                    acceleration[pair.first], acceleration[pair.second], segment));
+        }
+        else
+        {
+            // search all pairs when filtering is disabled or fails.
+            for (std::size_t i = 0; i < balls.size(); ++i)
+                for (std::size_t j = i + 1; j < balls.size(); ++j)
+                    segment = std::min(segment, pairContactTime(balls[i], balls[j],
+                        acceleration[i], acceleration[j], segment));
+        }
         for (std::size_t i = 0; i < balls.size(); ++i)
         {
             auto& ball = balls[i];

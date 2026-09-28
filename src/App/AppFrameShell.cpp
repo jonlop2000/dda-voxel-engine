@@ -29,6 +29,7 @@
 #include "UI/Editor.h"
 #include "UI/EngineFacade.h"
 #include "UI/Panels/ProfilerOverlay.h"
+#include "UI/Panels/PhysicsSandboxPanel.h"
 #endif
 
 // the frame shell: App::drawFrame's update half (simulation/world mutation,
@@ -257,252 +258,18 @@ FrameShellInputs App::updateFrame()
 
         if (sceneConfig().name == "physics_sandbox")
         {
-            if (ImGui::Begin("Physics Sandbox"))
+            const auto actions = drawPhysicsSandboxPanel(
+                physicsSandbox_, voxelDebugSettings_.voxelFreezeTime_);
+            physicsSandboxResetThisFrame = actions.reset;
+            physicsSandboxPauseChangedThisFrame = actions.pauseChanged;
+            physicsSandboxStepRequested = actions.step;
+            if (actions.resetCamera)
             {
-                using Preset = engine::physics::PhysicsSandbox::Preset;
-                struct PresetOption { Preset value; const char* name; };
-                const PresetOption presetOptions[] = {
-                    {Preset::Default, "Default (three balls)"},
-                    {Preset::FastCollision, "Fast collision (200 m/s)"},
-                    {Preset::ThreeBallChain, "Three-ball chain reaction"}
-                };
-                const char* selectedPresetName = presetOptions[0].name;
-                for (const auto& option : presetOptions)
-                    if (physicsSandbox_.preset() == option.value) selectedPresetName = option.name;
-                if (ImGui::BeginCombo("Preset", selectedPresetName))
-                {
-                    for (const auto& option : presetOptions)
-                    {
-                        const bool selected = physicsSandbox_.preset() == option.value;
-                        if (ImGui::Selectable(option.name, selected))
-                        {
-                            physicsSandbox_.loadPreset(option.value);
-                            physicsSandboxResetThisFrame = true;
-                        }
-                        if (selected) ImGui::SetItemDefaultFocus();
-                    }
-                    ImGui::EndCombo();
-                }
-                ImGui::TextWrapped("Selecting a preset resets and pauses. Physics settings are preserved.");
-                if (ImGui::Button("Reset"))
-                {
-                    physicsSandbox_.reset();
-                    physicsSandboxResetThisFrame = true;
-                }
-                ImGui::SameLine();
-                if (ImGui::Button(physicsSandbox_.isPaused() ? "Resume" : "Pause"))
-                {
-                    physicsSandbox_.setPaused(!physicsSandbox_.isPaused());
-                    physicsSandboxPauseChangedThisFrame = true;
-                }
-                ImGui::SameLine();
-                ImGui::BeginDisabled(!physicsSandbox_.isPaused());
-                physicsSandboxStepRequested = ImGui::Button("Step (0.01 s)");
-                ImGui::EndDisabled();
-                ImGui::Text("Simulation: %s", physicsSandbox_.isPaused() ? "Paused" :
-                            (voxelDebugSettings_.voxelFreezeTime_ ? "Frozen" : "Running"));
-                ImGui::Text("Simulation time: %.3f s", physicsSandbox_.elapsedTime());
-                double restitution = physicsSandbox_.restitution();
-                const double minimumRestitution = 0.0;
-                const double maximumRestitution = 1.0;
-                if (ImGui::SliderScalar("Restitution", ImGuiDataType_Double, &restitution,
-                                        &minimumRestitution, &maximumRestitution, "%.2f",
-                                        ImGuiSliderFlags_AlwaysClamp))
-                {
-                    physicsSandbox_.setRestitution(restitution);
-                }
-                ImGui::TextWrapped("Applies to ball and boundary impacts. Reset to replay.");
-                double floorFriction = physicsSandbox_.floorFriction();
-                const double minimumFloorFriction = 0.0;
-                const double maximumFloorFriction = 1.0;
-                if (ImGui::SliderScalar("Floor friction", ImGuiDataType_Double, &floorFriction,
-                                        &minimumFloorFriction, &maximumFloorFriction, "%.2f",
-                                        ImGuiSliderFlags_AlwaysClamp))
-                {
-                    physicsSandbox_.setFloorFriction(floorFriction);
-                }
-                ImGui::TextWrapped("Slows sliding after bouncing settles. "
-                                   "0 disables floor friction. Reset to replay.");
-                if (physicsSandbox_.preset() == Preset::FastCollision)
-                {
-                    ImGui::Separator();
-                    ImGui::TextWrapped("A and B approach at 200 m/s each. C rests off to the side. "
-                                       "From reset, press Step once to inspect the first impact.");
-                    ImGui::TextUnformatted("Expected first contact: 0.004500 s (A-B)");
-                    ImGui::TextWrapped("With restitution 0.80, after one step: "
-                                       "A has x = -0.980 m, vx = -160 m/s; "
-                                       "B has x = +0.980 m, vx = +160 m/s.");
-                    ImGui::Text("Current center x (m): A %.3f | B %.3f",
-                                physicsSandbox_.balls()[0].position.x,
-                                physicsSandbox_.balls()[1].position.x);
-                }
-                if (physicsSandbox_.preset() == Preset::ThreeBallChain)
-                {
-                    ImGui::Separator();
-                    ImGui::TextWrapped("Three equal 1 kg balls. A starts at 200 m/s; B and C start stationary. "
-                                       "For full horizontal velocity transfer, set restitution to 1.00, "
-                                       "then Reset and Step once.");
-                    // after the first impulse, b travels its 0.8 m gap at 100 * (1 + e) m/s.
-                    const double secondContactTime = 0.004 + 0.8 / (100.0 * (1.0 + physicsSandbox_.restitution()));
-                    ImGui::TextWrapped("Expected times from reset at the current restitution:");
-                    ImGui::Text("A-B: 0.004000 s | B-C: %.6f s", secondContactTime);
-                    if (secondContactTime > engine::physics::PhysicsSandbox::timeStep)
-                        ImGui::TextWrapped("At this restitution, B-C occurs after the first step.");
-                    ImGui::TextWrapped("At restitution 1.00, after one step: vx is 0, 0, 200 m/s "
-                                       "and x is -0.200, 0.800, 1.400 m for A, B, C.");
-                    ImGui::Text("Current center x (m): A %.3f | B %.3f | C %.3f",
-                                physicsSandbox_.balls()[0].position.x,
-                                physicsSandbox_.balls()[1].position.x,
-                                physicsSandbox_.balls()[2].position.x);
-                }
-                ImGui::Separator();
-                ImGui::TextUnformatted("Recent ball collisions");
-                ImGui::TextDisabled("Contact time; newest first");
-                if (ImGui::BeginChild("BallCollisionHistory",
-                                     ImVec2(0.0f, ImGui::GetTextLineHeightWithSpacing() * 4.0f)))
-                {
-                    const auto& collisions = physicsSandbox_.recentCollisions();
-                    if (collisions.empty())
-                    {
-                        ImGui::TextDisabled("No ball collisions yet.");
-                    }
-                    for (auto event = collisions.rbegin(); event != collisions.rend(); ++event)
-                    {
-                        // Current ball indices 0, 1, 2 match the A, B, C velocity labels.
-                        ImGui::Text("%.6f s: %c hit %c", event->simulationTime,
-                                    'A' + static_cast<int>(event->ballA),
-                                    'A' + static_cast<int>(event->ballB));
-                    }
-                }
-                ImGui::EndChild();
-                if (ImGui::CollapsingHeader("Latest impact momentum", ImGuiTreeNodeFlags_DefaultOpen))
-                {
-                    const auto& collisions = physicsSandbox_.recentCollisions();
-                    if (collisions.empty())
-                    {
-                        ImGui::TextDisabled("Waiting for a ball collision.");
-                    }
-                    else
-                    {
-                        const auto& event = collisions.back();
-                        const glm::dvec3 momentumChange = event.momentumAfter - event.momentumBefore;
-                        ImGui::Text("%.6f s: %c + %c (kg*m/s)", event.simulationTime,
-                                    'A' + static_cast<int>(event.ballA),
-                                    'A' + static_cast<int>(event.ballB));
-                        if (ImGui::BeginTable("ImpactMomentum", 4,
-                                              ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                                              ImGuiTableFlags_SizingStretchSame))
-                        {
-                            ImGui::TableSetupColumn("Axis");
-                            ImGui::TableSetupColumn("Before");
-                            ImGui::TableSetupColumn("After");
-                            ImGui::TableSetupColumn("Change");
-                            ImGui::TableHeadersRow();
-                            const char* axisNames[] = {"x", "y", "z"};
-                            for (int axis = 0; axis < 3; ++axis)
-                            {
-                                ImGui::TableNextRow();
-                                ImGui::TableSetColumnIndex(0);
-                                ImGui::TextUnformatted(axisNames[axis]);
-                                ImGui::TableSetColumnIndex(1);
-                                ImGui::Text("%.3f", event.momentumBefore[axis]);
-                                ImGui::TableSetColumnIndex(2);
-                                ImGui::Text("%.3f", event.momentumAfter[axis]);
-                                ImGui::TableSetColumnIndex(3);
-                                ImGui::Text("%.2e", momentumChange[axis]);
-                            }
-                            ImGui::EndTable();
-                        }
-                        ImGui::Text("Change magnitude: %.2e kg*m/s", glm::length(momentumChange));
-                        ImGui::TextWrapped("Change = after - before; expected near zero.");
-                    }
-                }
-                if (ImGui::CollapsingHeader("Latest impact energy", ImGuiTreeNodeFlags_DefaultOpen))
-                {
-                    const auto& collisions = physicsSandbox_.recentCollisions();
-                    if (collisions.empty())
-                    {
-                        ImGui::TextDisabled("Waiting for a ball collision.");
-                    }
-                    else
-                    {
-                        const auto& event = collisions.back();
-                        const double energyLost = event.kineticEnergyBefore - event.kineticEnergyAfter;
-                        ImGui::Text("%.6f s: %c + %c", event.simulationTime,
-                                    'A' + static_cast<int>(event.ballA),
-                                    'A' + static_cast<int>(event.ballB));
-                        ImGui::Text("Restitution at impact: %.2f", event.restitution);
-                        ImGui::TextUnformatted("Combined kinetic energy");
-                        ImGui::Text("Before: %.6f J", event.kineticEnergyBefore);
-                        ImGui::Text("After:  %.6f J", event.kineticEnergyAfter);
-                        ImGui::Text("Lost:   %.6f J", energyLost);
-                        ImGui::TextWrapped("Energy lost = before - after.");
-                    }
-                }
-                ImGui::Separator();
-                // the current experiment resets to three balls; these references do not copy them.
-                const auto& balls = physicsSandbox_.balls();
-                const auto& ballA = balls[0];
-                const auto& ballB = balls[1];
-                const auto& ballC = balls[2];
-                ImGui::Text("Mass (kg): A %.1f | B %.1f | C %.1f", ballA.mass, ballB.mass, ballC.mass);
-                ImGui::TextUnformatted("Velocity / speed (m/s)");
-                // compare matching components, including the z motion after an off-center impact.
-                if (ImGui::BeginTable("BallVelocities", 4,
-                                      ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
-                                      ImGuiTableFlags_SizingStretchSame))
-                {
-                    ImGui::TableSetupColumn("Quantity");
-                    ImGui::TableSetupColumn("A (blue)");
-                    ImGui::TableSetupColumn("B (pink)");
-                    ImGui::TableSetupColumn("C (yellow)");
-                    ImGui::TableHeadersRow();
-                    const char* axisNames[] = {"vx", "vy", "vz"};
-                    for (int axis = 0; axis < 3; ++axis)
-                    {
-                        ImGui::TableNextRow();
-                        ImGui::TableSetColumnIndex(0);
-                        ImGui::TextUnformatted(axisNames[axis]);
-                        ImGui::TableSetColumnIndex(1);
-                        ImGui::Text("%.3f", ballA.velocity[axis]);
-                        ImGui::TableSetColumnIndex(2);
-                        ImGui::Text("%.3f", ballB.velocity[axis]);
-                        ImGui::TableSetColumnIndex(3);
-                        ImGui::Text("%.3f", ballC.velocity[axis]);
-                    }
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::TextUnformatted("Speed x/z");
-                    for (int ballIndex = 0; ballIndex < 3; ++ballIndex)
-                    {
-                        const auto& ball = balls[ballIndex];
-                        const double horizontalSpeed = std::hypot(ball.velocity.x, ball.velocity.z);
-                        ImGui::TableSetColumnIndex(ballIndex + 1);
-                        // significant digits keep very slow sliding visible instead of rounding to zero.
-                        ImGui::Text("%.4g", horizontalSpeed);
-                    }
-                    ImGui::TableNextRow();
-                    ImGui::TableSetColumnIndex(0);
-                    ImGui::TextUnformatted("State");
-                    for (int ballIndex = 0; ballIndex < 3; ++ballIndex)
-                    {
-                        const auto& ball = balls[ballIndex];
-                        // a momentarily zero vertical speed at a bounce apex is still airborne.
-                        const char* motionState = ball.isResting ? "Resting" :
-                            (engine::physics::isBallSupportedByFloor(ball) ? "Sliding" : "Airborne");
-                        ImGui::TableSetColumnIndex(ballIndex + 1);
-                        ImGui::TextUnformatted(motionState);
-                    }
-                    ImGui::EndTable();
-                }
-                ImGui::TextWrapped("Speed x/z = sqrt(vx*vx + vz*vz). "
-                                   "Sliding means supported by the floor; resting means stopped.");
-                ImGui::Separator();
-                ImGui::TextUnformatted("Ball A (blue)");
-                ImGui::Text("Center height: %.3f m", ballA.position.y);
-                ImGui::Text("Horizontal position (x): %.3f m", ballA.position.x);
+                camera_.position = physicsSandbox_.isStressPreset() ?
+                    glm::vec3{0.0f, 11.0f, 10.0f} : sceneConfig().cameraPosition;
+                camera_.yaw = physicsSandbox_.isStressPreset() ? 0.0f : sceneConfig().cameraYaw;
+                camera_.pitch = physicsSandbox_.isStressPreset() ? -0.8f : sceneConfig().cameraPitch;
             }
-            ImGui::End();
         }
     }
 #endif
@@ -553,6 +320,15 @@ FrameShellInputs App::updateFrame()
 
     if (sceneConfig().name == "physics_sandbox")
     {
+        if (voxelWorld_.instances().size() != physicsSandbox_.balls().size() + 5)
+        {
+            // the scene rebuild waits for gpu work before replacing volumes.
+            if (!rebuildVolumeScene())
+                logAndExit("PhysicsSandbox", "Could not rebuild the ball volumes.");
+            physicsSandbox_.setPaused(true);
+            physicsSandboxResetThisFrame = true;
+            lastFrameTime_ = glfwGetTime();
+        }
         // show the exact starting state on the frame containing a reset.
         if (!physicsSandboxResetThisFrame)
         {
@@ -567,19 +343,26 @@ FrameShellInputs App::updateFrame()
                 physicsSandbox_.update(dt);
             }
         }
-        // sync visible positions while paused or frozen so Reset and Step appear immediately.
-        // PhysicsSandboxScene creates sphere instances in the same order as the balls.
+        // sphere instances follow the simulation's ball order.
         const auto& balls = physicsSandbox_.balls();
+        // keep running physics out of the focused idle throttle.
+        if (!physicsSandbox_.isPaused() && !voxelDebugSettings_.voxelFreezeTime_ &&
+            std::any_of(balls.begin(), balls.end(), [](const auto& ball) { return !ball.isResting; }))
+        {
+            lastInteractionTime_ = realNow;
+        }
         for (std::size_t ballIndex = 0; ballIndex < balls.size(); ++ballIndex)
         {
             const auto& ball = balls[ballIndex];
-            // subtract the 0.12 m center offset on each axis to get the volume's origin.
+            // subtract the voxel sphere's center offset.
             const glm::vec3 volumePosition = {
                 static_cast<float>(ball.position.x - 0.12),
                 static_cast<float>(ball.position.y - 0.12),
                 static_cast<float>(ball.position.z - 0.12)
             };
-            voxelWorld_.setInstancePosition(static_cast<uint32_t>(ballIndex), volumePosition);
+            const auto index = static_cast<uint32_t>(ballIndex);
+            if (voxelWorld_.instancePosition(index) != volumePosition)
+                voxelWorld_.setInstancePosition(index, volumePosition);
         }
     }
 

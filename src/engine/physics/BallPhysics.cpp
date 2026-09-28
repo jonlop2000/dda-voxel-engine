@@ -8,6 +8,63 @@
 
 namespace engine::physics {
 
+    Aabb calculateBallBounds(const Ball& ball)
+    {
+        // a sphere extends by its radius in both directions along every axis.
+        const glm::dvec3 extent{ball.radius};
+        return {ball.position - extent, ball.position + extent};
+    }
+
+    std::optional<Aabb> calculateSweptBallBounds(const Ball& ball,
+                                                 const glm::dvec3& acceleration, double duration)
+    {
+        if (!std::isfinite(duration) || duration < 0.0 ||
+            !std::isfinite(ball.radius) || ball.radius < 0.0) return std::nullopt;
+
+        Aabb bounds;
+        const double infinity = std::numeric_limits<double>::infinity();
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            const double position = ball.position[axis];
+            const double velocity = ball.velocity[axis];
+            const double axisAcceleration = acceleration[axis];
+            if (!std::isfinite(position) || !std::isfinite(velocity) ||
+                !std::isfinite(axisAcceleration)) return std::nullopt;
+
+            const auto positionAt = [&](double time) {
+                return std::fma(0.5 * axisAcceleration * time, time,
+                                std::fma(velocity, time, position));
+            };
+            const double endPosition = positionAt(duration);
+            if (!std::isfinite(endPosition)) return std::nullopt;
+            double minimumCenter = std::min(position, endPosition);
+            double maximumCenter = std::max(position, endPosition);
+
+            // include interior turning points where v + a*t = 0.
+            if (axisAcceleration != 0.0)
+            {
+                const double turningTime = -velocity / axisAcceleration;
+                if (turningTime > 0.0 && turningTime < duration)
+                {
+                    const double turningPosition = positionAt(turningTime);
+                    if (!std::isfinite(turningPosition)) return std::nullopt;
+                    minimumCenter = std::min(minimumCenter, turningPosition);
+                    maximumCenter = std::max(maximumCenter, turningPosition);
+                }
+            }
+
+            // use absolute motion terms to retain rounding error estimates.
+            const double scale = std::abs(position) + std::abs(velocity * duration) +
+                                 std::abs(0.5 * axisAcceleration * duration * duration) + ball.radius;
+            const double padding = 8.0 * std::numeric_limits<double>::epsilon() * scale;
+            bounds.minimum[axis] = std::nextafter(minimumCenter - ball.radius - padding, -infinity);
+            bounds.maximum[axis] = std::nextafter(maximumCenter + ball.radius + padding, infinity);
+            if (!std::isfinite(bounds.minimum[axis]) || !std::isfinite(bounds.maximum[axis]))
+                return std::nullopt;
+        }
+        return bounds;
+    }
+
     bool areBallsTouching(const Ball &ballA, const Ball &ballB) 
     {
         const glm::dvec3 offset = ballB.position - ballA.position;
@@ -33,31 +90,31 @@ namespace engine::physics {
         const double quadraticB = 2.0 * glm::dot(relativePosition, relativeVelocity);
         const double quadraticC = glm::dot(relativePosition, relativePosition)
             - combinedRadius * combinedRadius;
-        // invalid or overflowing coefficients cannot produce a reliable contact time.
+        // reject invalid or overflowing quadratic coefficients.
         if (!std::isfinite(quadraticA) || !std::isfinite(quadraticB) || !std::isfinite(quadraticC))
         {
             return std::nullopt;
         }
 
-        // existing contact is a geometric result; the caller decides whether an impulse is needed.
+        // existing contact returns zero regardless of approach or separation.
         if (quadraticC <= 0.0)
         {
             return 0.0;
         }
-        // separated balls cannot meet without relative motion toward one another.
+        // separated balls must approach each other to collide.
         if (quadraticA == 0.0 || quadraticB >= 0.0)
         {
             return std::nullopt;
         }
 
-        // fused multiply-add reduces rounding in the subtraction that forms the discriminant.
+        // fused multiply-add reduces rounding in the discriminant.
         const double discriminant = std::fma(-4.0 * quadraticA, quadraticC,
                                              quadraticB * quadraticB);
         if (!std::isfinite(discriminant) || discriminant < 0.0)
         {
             return std::nullopt;
         }
-        // this is the smaller quadratic root, rearranged to avoid subtracting similar numbers.
+        // rearrange the smaller root to avoid subtracting similar numbers.
         const double timeToContact = (2.0 * quadraticC) /
             (-quadraticB + std::sqrt(discriminant));
         if (!std::isfinite(timeToContact) || timeToContact < 0.0 || timeToContact > maxTime)
@@ -102,7 +159,7 @@ namespace engine::physics {
             const double impulseMagnitude = (-(1 + restitution) * velocityAlongNormal) / inverseMassSum;
             const glm::dvec3 impulse = impulseMagnitude * normal;
 
-            // the normal points from A to B, so their changes are opposite.
+            // the normal points from a to b, so their changes are opposite.
             ballA.velocity -= impulse * inverseMassA;
             ballB.velocity += impulse * inverseMassB;
 
@@ -117,11 +174,11 @@ namespace engine::physics {
             const double correctionMagnitude = penetrationDepth / inverseMassSum;
             const glm::dvec3 positionCorrection = correctionMagnitude * normal;
 
-            // weight separation by inverse mass: the lighter ball moves farther.
+            // inverse mass makes the lighter ball move farther.
             ballA.position -= positionCorrection * inverseMassA;
             ballB.position += positionCorrection * inverseMassB;
 
-            // moving a ball can change its support; let physics update it again.
+            // recheck support after correcting the position.
             ballA.isResting = false;
             ballB.isResting = false;
         }
@@ -160,7 +217,7 @@ namespace engine::physics {
     {
         const double wallLimit = 5.0 - ball.radius;
         const double infinity = std::numeric_limits<double>::infinity();
-        // a previous overlap correction may have pushed the center outside a wall.
+        // overlap correction can push the ball outside a wall.
         ball.position.x = std::clamp(ball.position.x, -wallLimit, wallLimit);
         ball.position.z = std::clamp(ball.position.z, -wallLimit, wallLimit);
         double remainingTime = duration;
@@ -174,7 +231,7 @@ namespace engine::physics {
             const double moveTime = std::min(remainingTime, stopTime);
             const double distance = (speed - 0.5 * deceleration * moveTime) * moveTime;
 
-            // distances are measured along the path, rather than along either axis.
+            // measure distance along the path.
             const double wallX = direction.x > 0.0 ? wallLimit : -wallLimit;
             const double wallZ = direction.z > 0.0 ? wallLimit : -wallLimit;
             const double distanceX = direction.x == 0.0 ? infinity :
@@ -186,7 +243,7 @@ namespace engine::physics {
             if (wallDistance > distance)
             {
                 ball.position += direction * distance;
-                // finish at the stopping point instead of allowing friction to reverse motion.
+                // stop before friction can reverse motion.
                 const double finalSpeed = stopTime <= remainingTime ? 0.0 :
                     std::max(0.0, speed - deceleration * moveTime);
                 ball.velocity.x = direction.x * finalSpeed;
@@ -196,14 +253,13 @@ namespace engine::physics {
 
             const double contactSpeed = std::sqrt(std::max(0.0,
                 speed * speed - 2.0 * deceleration * wallDistance));
-            // this form of the quadratic root avoids subtracting nearly equal speeds.
-            // it also works when deceleration is zero during the airborne portion.
+            // this stable quadratic root also handles zero deceleration.
             const double timeToWall = 2.0 * wallDistance / (speed + contactSpeed);
             ball.position += direction * wallDistance;
             ball.velocity.x = direction.x * contactSpeed;
             ball.velocity.z = direction.z * contactSpeed;
 
-            // reflect both components for a corner, allowing tiny rounding differences.
+            // reflect both components at corners within rounding tolerance.
             const double cornerTolerance = 1e-12 * std::max(1.0, wallDistance);
             if (distanceX - wallDistance <= cornerTolerance)
             {
@@ -216,7 +272,7 @@ namespace engine::physics {
                 ball.velocity.z *= -restitution;
             }
             remainingTime = std::max(0.0, remainingTime - timeToWall);
-            // the bounce changes speed and direction; solve the next segment from contact.
+            // use the rebound velocity for the next segment.
         }
     }
 
@@ -238,8 +294,7 @@ namespace engine::physics {
         if (ball.isResting || deltaTime <= 0.0) {
             return;
         }
-        // on a level floor, friction force is coefficient times mass times gravity.
-        // dividing by mass gives this deceleration, independent of the ball's mass.
+        // dividing friction force by mass leaves coefficient times gravity.
         const double frictionDeceleration = floorFriction > 0.0 && acceleration < 0.0 ?
             floorFriction * -acceleration : 0.0;
         if (frictionDeceleration > 0.0 && isBallSupportedByFloor(ball))
@@ -287,7 +342,7 @@ namespace engine::physics {
             newPosition.x = rightWallContactX + wallBounceVelocity.x * remainingTime;
         }
         else if (leftWallDistance <= ball.radius && glm::dot(newVelocity, leftWall.normal) < 0.0) {
-            // negative displacement divided by negative velocity gives positive time.
+            // negative displacement and velocity give positive contact time.
             double timeToWall = (leftWallContactX - ball.position.x) / ball.velocity.x;
             double remainingTime = deltaTime - timeToWall;
 
@@ -298,14 +353,14 @@ namespace engine::physics {
             newPosition.x = leftWallContactX + wallBounceVelocity.x * remainingTime;
         }
 
-        // z walls are independent of x walls, so both axes can bounce in one step.
+        // handle z walls independently of x walls.
         const double frontWallDistance = signedDistanceToPlane(newPosition, frontWall);
         const double backWallDistance = signedDistanceToPlane(newPosition, backWall);
         if (frontWallDistance <= ball.radius && glm::dot(newVelocity, frontWall.normal) < 0.0) {
             const double timeToWall = (frontWallContactZ - ball.position.z) / ball.velocity.z;
             const double remainingTime = deltaTime - timeToWall;
 
-            // reflect z and preserve the x-wall response and gravity's y velocity.
+            // reflect z while preserving x and y velocity.
             const glm::dvec3 wallBounceVelocity = calculateBounceVelocity(newVelocity, frontWall.normal, restitution);
             newVelocity = wallBounceVelocity;
             newPosition.z = frontWallContactZ + wallBounceVelocity.z * remainingTime;
@@ -319,17 +374,17 @@ namespace engine::physics {
             newPosition.z = backWallContactZ + wallBounceVelocity.z * remainingTime;
         }
 
-        // contact requires the predicted center to reach one radius from the floor.
+        // floor contact occurs when the center reaches one radius in height.
         const double floorDistance = signedDistanceToPlane(newPosition, floor);
         // a negative dot product means the ball is moving toward the floor.
         if (floorDistance <= ball.radius && glm::dot(newVelocity, floor.normal) < 0.0)
         {
-            // split the step at the actual contact time measured from its start.
+            // split the step at its actual contact time.
             double timeToContact = (-ball.velocity.y - std::sqrt(ball.velocity.y * ball.velocity.y
                 - 2 * acceleration * (ball.position.y - ball.radius))) / acceleration;
             double remainingTime = deltaTime - timeToContact;
 
-            // keep both horizontal wall responses and calculate y velocity at floor contact.
+            // compute vertical impact velocity while keeping wall responses.
             glm::dvec3 contactVelocity = newVelocity;
             contactVelocity.y = ball.velocity.y + acceleration * timeToContact;
             const glm::dvec3 bounceVelocity = calculateBounceVelocity(contactVelocity, floor.normal, restitution);
@@ -337,8 +392,7 @@ namespace engine::physics {
             if (bounceVelocity.y <= restSpeedThreshold) {
                 if (frictionDeceleration > 0.0)
                 {
-                    // replay horizontal motion only up to landing, including any earlier walls.
-                    // the predicted end-of-step wall response may belong to a later contact.
+                    // replay horizontal motion and walls up to landing.
                     const double airborneTime = std::clamp(timeToContact, 0.0, deltaTime);
                     advanceHorizontalMotion(ball, airborneTime, 0.0, restitution);
                     advanceFloorSlide(ball, deltaTime - airborneTime,
@@ -358,14 +412,13 @@ namespace engine::physics {
                 return;
             }
 
-            // continue from contact height for the remainder of the same step.
-            // update only y so the horizontal motion and wall response stay intact.
+            // advance only y to preserve horizontal wall responses.
             newPosition.y = ball.radius + bounceVelocity.y * remainingTime
                 + 0.5 * acceleration * remainingTime * remainingTime;
             newVelocity.y = bounceVelocity.y + acceleration * remainingTime;
         }
 
-        // Ball& makes these changes update the object supplied by the caller.
+        // update the caller's ball through its reference.
         ball.position = newPosition;
         ball.velocity = newVelocity;
     }

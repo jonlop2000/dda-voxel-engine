@@ -8,19 +8,33 @@
 
 namespace engine::physics {
 
-// Owns the experiment and its clock; rendering and UI remain in App.
+// own the experiment and its clock.
 class PhysicsSandbox
 {
 public:
-    enum class Preset { Default, FastCollision, ThreeBallChain };
+    enum class Preset { Default, FastCollision, ThreeBallChain, StressDrop, StressPairs, StressStacks };
 
     PhysicsSandbox();
 
-    // selecting a preset resets and pauses, preserving restitution and friction.
+    // reset and pause the new preset while keeping restitution and friction.
     void loadPreset(Preset preset);
     Preset preset() const { return preset_; }
+    bool isStressPreset() const;
+    // changing the count resets and pauses an active stress scene.
+    void setStressBallCount(std::size_t count);
+    std::size_t stressBallCount() const { return stressBallCount_; }
+    static constexpr std::size_t maxStressBalls = 250;
+    static constexpr std::size_t maxStressStepsPerFrame = 4;
 
-    // restore the selected preset, clocks, and history, preserving pause and physics settings.
+    void setPlaybackSpeed(double speed);
+    double playbackSpeed() const { return playbackSpeed_; }
+    double lastStepMilliseconds() const { return lastStepMilliseconds_; }
+    double lastUpdateMilliseconds() const { return lastUpdateMilliseconds_; }
+    std::size_t lastUpdateSteps() const { return lastUpdateSteps_; }
+    double discardedTime() const { return discardedTime_; }
+    std::size_t lastStepImpacts() const { return stepCollisions_.size(); }
+
+    // reset the preset and history while keeping pause and physics settings.
     void reset();
     void setPaused(bool paused);
     bool isPaused() const { return paused_; }
@@ -33,13 +47,13 @@ public:
     void setFloorFriction(double floorFriction);
     double floorFriction() const { return floorFriction_; }
 
-    // Accumulate running time and advance complete fixed steps only.
+    // advance fixed steps, limiting stress scenes to four steps per frame.
     void update(double frameTime);
-    // Advance exactly one fixed step while paused.
+    // advance exactly one fixed step while paused.
     void step();
 
     const std::vector<Ball>& balls() const { return balls_; }
-    // Stored oldest first; UI can iterate backward to show the newest impact first.
+    // store impacts oldest first.
     const std::deque<BallCollisionEvent>& recentCollisions() const { return recentCollisions_; }
     static constexpr std::size_t maxRecentCollisions = 8;
     double elapsedTime() const { return elapsedTime_; }
@@ -47,17 +61,24 @@ public:
 
 private:
     void advanceStep();
+    void resetStressBalls();
 
-    // The scene creates its sphere volumes in this same order.
+    // match the scene's sphere order.
     std::vector<Ball> balls_;
     std::deque<BallCollisionEvent> recentCollisions_;
     std::vector<BallCollisionEvent> stepCollisions_;
+    std::size_t stressBallCount_ = 100;
+    double playbackSpeed_ = 1.0;
+    double lastStepMilliseconds_ = 0.0;
+    double lastUpdateMilliseconds_ = 0.0;
+    std::size_t lastUpdateSteps_ = 0;
+    double discardedTime_ = 0.0;
     double accumulator_ = 0.0;
     double elapsedTime_ = 0.0;
     Preset preset_ = Preset::Default;
     bool paused_ = false;
     double restitution_ = 0.8;
-    double floorFriction_ = 0.2; // sliding friction coefficient for the floor (dimensionless).
+    double floorFriction_ = 0.2; // dimensionless sliding coefficient.
 };
 
 } // namespace engine::physics

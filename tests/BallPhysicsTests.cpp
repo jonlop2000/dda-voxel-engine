@@ -111,6 +111,134 @@ bool expectCollisionTime(const char* name, const engine::physics::Ball& ballA,
     return false;
 }
 
+bool testSweptBallBounds()
+{
+    using engine::physics::Aabb;
+    using engine::physics::Ball;
+    using engine::physics::calculateSweptBallBounds;
+    struct BoundsCase
+    {
+        const char* name;
+        Ball ball;
+        glm::dvec3 acceleration;
+        double duration;
+        Aabb expected;
+    };
+    const BoundsCase cases[] = {
+        {"stationary", {{1.0, 2.0, -3.0}, {0.0, 0.0, 0.0}, 0.1}, {0.0, 0.0, 0.0}, 1.0,
+            {{0.9, 1.9, -3.1}, {1.1, 2.1, -2.9}}},
+        {"zero duration", {{1.0, 2.0, -3.0}, {2.0, -4.0, 6.0}, 0.1}, {-9.0, 10.0, -11.0}, 0.0,
+            {{0.9, 1.9, -3.1}, {1.1, 2.1, -2.9}}},
+        {"linear signed motion", {{1.0, 2.0, -3.0}, {2.0, -4.0, 6.0}, 0.1}, {0.0, 0.0, 0.0}, 0.5,
+            {{0.9, -0.1, -3.1}, {2.1, 2.1, 0.1}}},
+        // both endpoints have y = 2, but the center reaches y = 7 at t = 1.
+        {"interior apex", {{0.0, 2.0, 0.0}, {0.0, 10.0, 0.0}, 0.1}, {0.0, -10.0, 0.0}, 2.0,
+            {{-0.1, 1.9, -0.1}, {0.1, 7.1, 0.1}}},
+        // x, y, and z turn at different times: 0.25, 0.5, and 0.75 seconds.
+        {"three axis extrema", {{1.0, 2.0, -3.0}, {-2.0, 4.0, -6.0}, 0.1}, {8.0, -8.0, 8.0}, 1.0,
+            {{0.65, 1.9, -5.35}, {3.1, 3.1, -2.9}}},
+        {"turn at start", {{0.0, 2.0, 0.0}, {0.0, 0.0, 0.0}, 0.25}, {2.0, -2.0, 0.0}, 1.0,
+            {{-0.25, 0.75, -0.25}, {1.25, 2.25, 0.25}}},
+        {"turn at end", {{0.0, 2.0, 0.0}, {2.0, -2.0, 0.0}, 0.25}, {-2.0, 2.0, 0.0}, 1.0,
+            {{-0.25, 0.75, -0.25}, {1.25, 2.25, 0.25}}},
+        {"turn after interval", {{0.0, 2.0, 0.0}, {0.0, 10.0, 0.0}, 0.1}, {0.0, -10.0, 0.0}, 0.5,
+            {{-0.1, 1.9, -0.1}, {0.1, 5.85, 0.1}}},
+        {"turn before interval", {{0.0, 2.0, 0.0}, {0.0, -10.0, 0.0}, 0.1}, {0.0, -10.0, 0.0}, 0.5,
+            {{-0.1, -4.35, -0.1}, {0.1, 2.1, 0.1}}},
+        {"fast airborne ball", {{-1.0, 2.0, 0.0}, {200.0, 0.0, 0.0}, 0.1}, {0.0, -9.81, 0.0}, 0.01,
+            {{-1.1, 1.8995095, -0.1}, {1.1, 2.1, 0.1}}},
+        {"zero radius", {{0.0, 2.0, 0.0}, {0.0, 10.0, 0.0}, 0.0}, {0.0, -10.0, 0.0}, 2.0,
+            {{0.0, 2.0, 0.0}, {0.0, 7.0, 0.0}}}
+    };
+    for (const auto& example : cases)
+    {
+        const auto bounds = calculateSweptBallBounds(example.ball, example.acceleration, example.duration);
+        if (!bounds || !vectorsMatch(bounds->minimum, example.expected.minimum) ||
+            !vectorsMatch(bounds->maximum, example.expected.maximum))
+        {
+            std::cerr << "Swept bounds failed: " << example.name << '\n';
+            return false;
+        }
+        // check containment of the sphere's full extent throughout the interval, without a tolerance.
+        for (int sample = 0; sample <= 1024; ++sample)
+        {
+            const double time = example.duration * (sample / 1024.0);
+            const auto center = example.ball.position + example.ball.velocity * time +
+                                0.5 * example.acceleration * time * time;
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                if (!(bounds->minimum[axis] <= center[axis] - example.ball.radius &&
+                      bounds->maximum[axis] >= center[axis] + example.ball.radius))
+                {
+                    std::cerr << "Swept bounds missed sphere surface: " << example.name
+                              << " at time " << time << " on axis " << axis << '\n';
+                    return false;
+                }
+            }
+        }
+    }
+
+    // an obstacle at the apex must survive broad-phase filtering even though endpoint boxes miss it.
+    const auto arc = calculateSweptBallBounds(cases[3].ball, cases[3].acceleration, cases[3].duration);
+    const Ball obstacle{{0.0, 7.15, 0.0}, {0.0, 0.0, 0.0}, 0.1};
+    const auto obstacleBounds = engine::physics::calculateBallBounds(obstacle);
+    if (!arc || arc->maximum.y < obstacleBounds.minimum.y)
+    {
+        std::cerr << "Swept bounds missed the apex obstacle\n";
+        return false;
+    }
+
+    const double infinity = std::numeric_limits<double>::infinity();
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const Ball valid{{1.0, 2.0, 3.0}, {2.0, -4.0, 6.0}, 0.1};
+    for (double duration : {-1.0, infinity, -infinity, nan})
+    {
+        if (calculateSweptBallBounds(valid, {0.0, -9.81, 0.0}, duration))
+        {
+            std::cerr << "Swept bounds accepted an invalid duration\n";
+            return false;
+        }
+    }
+    for (double radius : {-0.1, infinity, nan})
+    {
+        Ball invalid = valid;
+        invalid.radius = radius;
+        if (calculateSweptBallBounds(invalid, {0.0, -9.81, 0.0}, 1.0))
+        {
+            std::cerr << "Swept bounds accepted an invalid radius\n";
+            return false;
+        }
+    }
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        for (double value : {infinity, -infinity, nan})
+        {
+            Ball invalidPosition = valid;
+            invalidPosition.position[axis] = value;
+            Ball invalidVelocity = valid;
+            invalidVelocity.velocity[axis] = value;
+            glm::dvec3 invalidAcceleration{0.0};
+            invalidAcceleration[axis] = value;
+            if (calculateSweptBallBounds(invalidPosition, {0.0, 0.0, 0.0}, 1.0) ||
+                calculateSweptBallBounds(invalidVelocity, {0.0, 0.0, 0.0}, 1.0) ||
+                calculateSweptBallBounds(valid, invalidAcceleration, 1.0))
+            {
+                std::cerr << "Swept bounds accepted non-finite motion data\n";
+                return false;
+            }
+        }
+    }
+    Ball overflowing = valid;
+    overflowing.velocity.x = std::numeric_limits<double>::max();
+    if (calculateSweptBallBounds(overflowing, {0.0, 0.0, 0.0}, 2.0))
+    {
+        std::cerr << "Swept bounds accepted an overflowing trajectory\n";
+        return false;
+    }
+    std::cout << "Swept bounds tests passed (extrema, containment, fast motion, invalid input)\n";
+    return true;
+}
+
 bool testBallCollisionTimes()
 {
     using engine::physics::Ball;
@@ -283,7 +411,7 @@ int main()
     const double physicsStep = 0.01;
     const double restitution = 0.8;
 
-    if (!testBallCollisionTimes() || !testFastBallCollision())
+    if (!testSweptBallBounds() || !testBallCollisionTimes() || !testFastBallCollision())
     {
         return 1;
     }

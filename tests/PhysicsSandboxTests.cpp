@@ -1,6 +1,7 @@
 #include "engine/physics/PhysicsSandbox.h"
 
 #include <cmath>
+#include <glm/geometric.hpp>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -326,6 +327,119 @@ void checkThreeBallChainPreset()
     std::cout << "PASS chain preset sequential contacts, settings, playback, and reset/switching\n";
 }
 
+void checkStressPresets()
+{
+    using engine::physics::PhysicsSandbox;
+    using Preset = PhysicsSandbox::Preset;
+    for (const auto preset : {Preset::StressDrop, Preset::StressPairs, Preset::StressStacks})
+    {
+        for (const std::size_t count : {32u, 100u, 250u})
+        {
+            PhysicsSandbox manual;
+            manual.setStressBallCount(count);
+            manual.loadPreset(preset);
+            require(manual.isPaused() && manual.balls().size() == count,
+                    "Stress preset must load the selected count and pause");
+            const PhysicsSandbox initial = manual;
+            PhysicsSandbox automatic = manual;
+            automatic.setPaused(false);
+            for (std::size_t i = 0; i < count; ++i)
+            {
+                const auto& a = manual.balls()[i];
+                for (std::size_t j = i + 1; j < count; ++j)
+                {
+                    const auto& b = manual.balls()[j];
+                    const auto separation = a.position - b.position;
+                    require(glm::dot(separation, separation) >
+                            (a.radius + b.radius) * (a.radius + b.radius),
+                            "Stress balls must start without overlapping");
+                }
+            }
+            const int frames = count == 250 ? 1000 : 120;
+            for (int frame = 0; frame < frames; ++frame)
+            {
+                manual.step();
+                automatic.update(PhysicsSandbox::timeStep);
+                requireSameState(manual, automatic);
+                for (const auto& ball : manual.balls())
+                {
+                    for (int axis = 0; axis < 3; ++axis)
+                        require(std::isfinite(ball.position[axis]) && std::isfinite(ball.velocity[axis]),
+                                "Stress playback produced non-finite state");
+                    require(ball.position.y >= ball.radius - 1e-8 &&
+                            std::abs(ball.position.x) <= 5.0 - ball.radius + 1e-8 &&
+                            std::abs(ball.position.z) <= 5.0 - ball.radius + 1e-8,
+                            "Stress ball escaped a boundary");
+                }
+                if (preset == Preset::StressPairs && frame == 33)
+                {
+                    require(manual.lastStepImpacts() == count / 2,
+                            "Every approaching pair must hit on the 34th step");
+                    for (const auto& event : manual.recentCollisions())
+                        require(near(event.simulationTime, 1.0 / 3.0),
+                                "Stress pair contact time is incorrect");
+                }
+            }
+            if (preset == Preset::StressStacks && count == 250)
+                for (const auto& ball : manual.balls())
+                    require(ball.isResting && ball.velocity == glm::dvec3{0.0},
+                            "The visual stack preset must finish settling");
+            require(manual.lastStepMilliseconds() >= 0.0 && automatic.lastUpdateSteps() == 1,
+                    "Physics timing and step counters must describe the completed update");
+            manual.reset();
+            requireSameState(manual, initial);
+            require(manual.lastUpdateSteps() == 0 && manual.lastStepImpacts() == 0 &&
+                    manual.lastStepMilliseconds() == 0.0, "Reset retained stress measurements");
+            manual.loadPreset(Preset::Default);
+            require(manual.balls().size() == 3 && manual.balls()[2].mass == 4.0,
+                    "Leaving stress mode must restore the original experiment");
+        }
+    }
+    PhysicsSandbox capped;
+    capped.setStressBallCount(10000);
+    require(capped.stressBallCount() == PhysicsSandbox::maxStressBalls,
+            "Visual count must respect the volume limit");
+    capped.loadPreset(Preset::StressPairs);
+    capped.setStressBallCount(33);
+    require(capped.isPaused() && capped.balls().size() == 32,
+            "Changing stress count must pause and keep complete pairs");
+    capped.setStressBallCount(0);
+    require(capped.balls().size() == 2, "Stress count must have a safe lower bound");
+    capped.setPaused(false);
+    capped.update(1.005);
+    require(capped.lastUpdateSteps() == PhysicsSandbox::maxStressStepsPerFrame &&
+            near(capped.elapsedTime(), 0.04) && near(capped.discardedTime(), 0.96),
+            "Stress playback must cap catch-up work and report discarded time");
+    capped.update(0.006);
+    require(near(capped.elapsedTime(), 0.05) && capped.lastUpdateSteps() == 1,
+            "Capped playback must retain fractional time without a backlog");
+    const PhysicsSandbox valid = capped;
+    for (double invalid : {-1.0, std::numeric_limits<double>::quiet_NaN(),
+                           std::numeric_limits<double>::infinity()})
+        capped.update(invalid);
+    requireSameState(capped, valid);
+    capped.reset();
+    require(capped.discardedTime() == 0.0, "Reset must clear discarded time");
+
+    PhysicsSandbox slow, stepped;
+    slow.setPlaybackSpeed(0.25);
+    slow.update(0.08);
+    stepped.setPaused(true);
+    stepped.step();
+    stepped.step();
+    requireSameState(slow, stepped);
+    slow.setPaused(true);
+    slow.step();
+    require(near(slow.elapsedTime(), 0.03), "Manual steps must ignore playback speed");
+    slow.setPlaybackSpeed(std::numeric_limits<double>::quiet_NaN());
+    require(slow.playbackSpeed() == 0.25, "Invalid playback speed must be ignored");
+    slow.setPlaybackSpeed(0.0);
+    require(slow.playbackSpeed() == 0.1, "Playback speed must have a lower bound");
+    slow.setPlaybackSpeed(10.0);
+    require(slow.playbackSpeed() == 1.0, "Playback speed must have an upper bound");
+    std::cout << "PASS stress scenes, contacts, count changes, slow motion, and bounded catch-up\n";
+}
+
 } // namespace
 
 int main()
@@ -508,6 +622,7 @@ int main()
         checkFloorFrictionControl();
         checkFastCollisionPreset();
         checkThreeBallChainPreset();
+        checkStressPresets();
 
         PhysicsSandbox settled;
         for (int step = 0; step < 3000; ++step) settled.update(PhysicsSandbox::timeStep);
