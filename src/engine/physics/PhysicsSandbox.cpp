@@ -12,18 +12,49 @@ PhysicsSandbox::PhysicsSandbox()
     reset();
 }
 
+void PhysicsSandbox::loadPreset(Preset preset)
+{
+    preset_ = preset;
+    reset();
+    setPaused(true);
+}
+
 void PhysicsSandbox::reset()
 {
-    // Restore all three balls, including their resting flags.
-    balls_ = {
-        {{-0.5, 2.0, 0.0}, {1.0, 0.0, 0.0}, 0.1, false},
-        {{0.5, 2.0, 0.1}, {-1.0, 0.0, 0.0}, 0.1, false},
-        // C weighs 4 kg and meets A after the initial A-B collision.
-        {{-0.25, 2.0, -0.8}, {0.0, 0.0, 1.0}, 0.1, false, 4.0}
-    };
+    if (preset_ == Preset::FastCollision)
+    {
+        // a and b reach contact at 0.0045 s, inside the first 0.01 s step.
+        // keep c resting away from their paths and preserve the scene's sphere order.
+        balls_ = {
+            {{-1.0, 2.0, 0.0}, {200.0, 0.0, 0.0}, 0.1, false},
+            {{1.0, 2.0, 0.0}, {-200.0, 0.0, 0.0}, 0.1, false},
+            {{0.0, 0.1, -3.0}, {0.0, 0.0, 0.0}, 0.1, true, 4.0}
+        };
+    }
+    else if (preset_ == Preset::ThreeBallChain)
+    {
+        // equal masses transfer the incoming horizontal velocity at restitution one.
+        // a reaches b at 0.004 s; b then reaches c at 0.008 s with that restitution.
+        balls_ = {
+            {{-1.0, 2.0, 0.0}, {200.0, 0.0, 0.0}, 0.1, false, 1.0},
+            {{0.0, 2.0, 0.0}, {0.0, 0.0, 0.0}, 0.1, false, 1.0},
+            {{1.0, 2.0, 0.0}, {0.0, 0.0, 0.0}, 0.1, false, 1.0}
+        };
+    }
+    else
+    {
+        // restore all three balls, including their resting flags.
+        balls_ = {
+            {{-0.5, 2.0, 0.0}, {1.0, 0.0, 0.0}, 0.1, false},
+            {{0.5, 2.0, 0.1}, {-1.0, 0.0, 0.0}, 0.1, false},
+            // c weighs 4 kg and meets a after the initial a-b collision.
+            {{-0.25, 2.0, -0.8}, {0.0, 0.0, 1.0}, 0.1, false, 4.0}
+        };
+    }
     accumulator_ = 0.0;
     elapsedTime_ = 0.0;
     recentCollisions_.clear();
+    stepCollisions_.clear();
 }
 
 void PhysicsSandbox::setPaused(bool paused)
@@ -76,41 +107,14 @@ void PhysicsSandbox::step()
 
 void PhysicsSandbox::advanceStep()
 {
-    const double gravityAcceleration = -9.81;
-    // bring every ball to the same moment before resolving any pairs.
-    for (auto& ball : balls_)
+    advanceBallSystem(balls_, timeStep, elapsedTime_,
+                      {-9.81, restitution_, floorFriction_}, stepCollisions_);
+    for (const auto& impact : stepCollisions_)
     {
-        advanceBall(ball, gravityAcceleration, timeStep, restitution_, floorFriction_);
+        if (recentCollisions_.size() == maxRecentCollisions) recentCollisions_.pop_front();
+        recentCollisions_.push_back(impact);
     }
-    const double stepEndTime = elapsedTime_ + timeStep;
-    // Starting j after i avoids self-collisions and duplicate pairs.
-    for (std::size_t i = 0; i < balls_.size(); ++i)
-    {
-        for (std::size_t j = i + 1; j < balls_.size(); ++j)
-        {
-            auto& ballA = balls_[i];
-            auto& ballB = balls_[j];
-            // gravity and boundary responses have already run. Measure only this pair's impact.
-            const glm::dvec3 momentumBefore = ballA.mass * ballA.velocity + ballB.mass * ballB.velocity;
-            const double kineticEnergyBefore =
-                0.5 * ballA.mass * glm::dot(ballA.velocity, ballA.velocity)
-                + 0.5 * ballB.mass * glm::dot(ballB.velocity, ballB.velocity);
-            if (resolveBallCollision(ballA, ballB, restitution_))
-            {
-                const glm::dvec3 momentumAfter = ballA.mass * ballA.velocity + ballB.mass * ballB.velocity;
-                const double kineticEnergyAfter =
-                    0.5 * ballA.mass * glm::dot(ballA.velocity, ballA.velocity)
-                    + 0.5 * ballB.mass * glm::dot(ballB.velocity, ballB.velocity);
-                if (recentCollisions_.size() == maxRecentCollisions)
-                {
-                    recentCollisions_.pop_front();
-                }
-                recentCollisions_.push_back({i, j, stepEndTime, momentumBefore, momentumAfter,
-                                             kineticEnergyBefore, kineticEnergyAfter, restitution_});
-            }
-        }
-    }
-    elapsedTime_ = stepEndTime;
+    elapsedTime_ += timeStep;
 }
 
 } // namespace engine::physics

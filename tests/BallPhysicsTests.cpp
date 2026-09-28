@@ -3,6 +3,9 @@
 #include <cmath>
 #include <iomanip>
 #include <iostream>
+#include <limits>
+
+#include <glm/geometric.hpp>
 
 namespace
 {
@@ -80,6 +83,198 @@ bool expectBallState(const char* testName, const engine::physics::Ball& ball,
     return false;
 }
 
+bool expectCollisionTime(const char* name, const engine::physics::Ball& ballA,
+                         const engine::physics::Ball& ballB, double maxTime,
+                         std::optional<double> expected)
+{
+    const auto actual = engine::physics::findBallCollisionTime(ballA, ballB, maxTime);
+    const auto reversed = engine::physics::findBallCollisionTime(ballB, ballA, maxTime);
+    // relative tolerance also checks tiny positive contact times without accepting zero.
+    const double tolerance = expected ? 1e-12 * std::abs(*expected) : 0.0;
+    if (actual.has_value() == expected.has_value() &&
+        reversed.has_value() == expected.has_value() &&
+        (!expected || (std::abs(*actual - *expected) <= tolerance &&
+                       std::abs(*reversed - *expected) <= tolerance)))
+    {
+        return true;
+    }
+    std::cerr << std::setprecision(17) << "Collision time " << name << " failed: expected ";
+    if (expected) std::cerr << *expected;
+    else std::cerr << "no contact";
+    std::cerr << ", got ";
+    if (actual) std::cerr << *actual;
+    else std::cerr << "no contact";
+    std::cerr << "; reversed arguments gave ";
+    if (reversed) std::cerr << *reversed;
+    else std::cerr << "no contact";
+    std::cerr << '\n';
+    return false;
+}
+
+bool testBallCollisionTimes()
+{
+    using engine::physics::Ball;
+    const Ball stationary{{0.0, 2.0, 0.0}, {0.0, 0.0, 0.0}, 0.25};
+    const double infinity = std::numeric_limits<double>::infinity();
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const double tinyGap = std::ldexp(1.0, -40);
+    struct TimeCase
+    {
+        const char* name;
+        Ball other;
+        double maxTime;
+        std::optional<double> expected;
+    };
+    const TimeCase cases[] = {
+        {"approaching", {{2.0, 2.0, 0.0}, {-1.0, 0.0, 0.0}, 0.25}, 2.0, 1.5},
+        {"at interval end", {{2.0, 2.0, 0.0}, {-1.0, 0.0, 0.0}, 0.25}, 1.5, 1.5},
+        {"just outside interval", {{2.0, 2.0, 0.0}, {-1.0, 0.0, 0.0}, 0.25},
+            std::nextafter(1.5, 0.0), std::nullopt},
+        {"zero interval", {{2.0, 2.0, 0.0}, {-1.0, 0.0, 0.0}, 0.25}, 0.0, std::nullopt},
+        {"moving apart", {{2.0, 2.0, 0.0}, {1.0, 0.0, 0.0}, 0.25}, 10.0, std::nullopt},
+        {"stationary separated", {{2.0, 2.0, 0.0}, {0.0, 0.0, 0.0}, 0.25}, 10.0, std::nullopt},
+        {"perpendicular motion", {{2.0, 2.0, 0.0}, {0.0, 0.0, 1.0}, 0.25}, 10.0, std::nullopt},
+        {"miss", {{2.0, 3.0, 0.0}, {-1.0, 0.0, 0.0}, 0.25}, 10.0, std::nullopt},
+        {"tangent", {{2.0, 2.5, 0.0}, {-1.0, 0.0, 0.0}, 0.25}, 3.0, 2.0},
+        {"three axes", {{1.0, 4.0, 2.0}, {-1.0, -2.0, -2.0}, 0.25}, 1.0, 5.0 / 6.0},
+        {"unequal radii", {{2.0, 2.0, 0.0}, {-1.0, 0.0, 0.0}, 0.5}, 2.0, 1.25},
+        {"tiny positive gap", {{0.5 + tinyGap, 2.0, 0.0}, {-1.0, 0.0, 0.0}, 0.25}, 1.0, tinyGap},
+        {"slow approach", {{2.0, 2.0, 0.0}, {-1e-10, 0.0, 0.0}, 0.25}, 2e10, 1.5e10},
+        {"touching stationary", {{0.5, 2.0, 0.0}, {0.0, 0.0, 0.0}, 0.25}, 0.0, 0.0},
+        {"touching approaching", {{0.5, 2.0, 0.0}, {-1.0, 0.0, 0.0}, 0.25}, 1.0, 0.0},
+        {"touching separating", {{0.5, 2.0, 0.0}, {1.0, 0.0, 0.0}, 0.25}, 1.0, 0.0},
+        {"overlap", {{0.25, 2.0, 0.0}, {1.0, 0.0, 0.0}, 0.25}, 1.0, 0.0},
+        {"coincident centers", {{0.0, 2.0, 0.0}, {0.0, 0.0, 0.0}, 0.25}, 0.0, 0.0},
+        {"negative interval", {{0.5, 2.0, 0.0}, {-1.0, 0.0, 0.0}, 0.25}, -1.0, std::nullopt},
+        {"infinite interval", {{2.0, 2.0, 0.0}, {-1.0, 0.0, 0.0}, 0.25}, infinity, std::nullopt},
+        {"nan interval", {{2.0, 2.0, 0.0}, {-1.0, 0.0, 0.0}, 0.25}, nan, std::nullopt},
+        {"negative radius", {{2.0, 2.0, 0.0}, {-1.0, 0.0, 0.0}, -0.25}, 2.0, std::nullopt},
+        {"nan radius", {{2.0, 2.0, 0.0}, {-1.0, 0.0, 0.0}, nan}, 2.0, std::nullopt},
+        {"nan position", {{nan, 2.0, 0.0}, {-1.0, 0.0, 0.0}, 0.25}, 2.0, std::nullopt},
+        {"infinite velocity", {{2.0, 2.0, 0.0}, {-infinity, 0.0, 0.0}, 0.25}, 2.0, std::nullopt}
+    };
+    for (const auto& example : cases)
+    {
+        if (!expectCollisionTime(example.name, stationary, example.other,
+                                 example.maxTime, example.expected))
+        {
+            return false;
+        }
+    }
+
+    // adding the same velocity to both balls leaves their contact time unchanged.
+    Ball movingA = stationary;
+    Ball movingB = cases[0].other;
+    const glm::dvec3 sharedVelocity{4.0, -3.0, 2.0};
+    movingA.velocity += sharedVelocity;
+    movingB.velocity += sharedVelocity;
+    if (!expectCollisionTime("shared motion", movingA, movingB, 2.0, 1.5)) return false;
+    movingB.velocity = movingA.velocity;
+    if (!expectCollisionTime("equal nonzero velocities", movingA, movingB, 10.0, std::nullopt)) return false;
+    std::cout << "Collision-time query tests passed (hits, misses, boundaries, symmetry, invalid input)\n";
+    return true;
+}
+
+bool testFastBallCollision()
+{
+    const double gravityAcceleration = -9.81;
+    const double physicsStep = 0.01;
+    const double restitution = 0.8;
+
+    // demonstrate the limitation of checking contact only after a full step.
+    engine::physics::Ball fastBallA{
+        {-1.0, 2.0, 0.0}, {200.0, 0.0, 0.0}, 0.1, false, 1.0};
+    engine::physics::Ball fastBallB{
+        {1.0, 2.0, 0.0}, {-200.0, 0.0, 0.0}, 0.1, false, 1.0};
+
+    // ask the engine for first contact before advancing either ball.
+    const auto contactTime = engine::physics::findBallCollisionTime(fastBallA, fastBallB, physicsStep);
+    if (!contactTime || !(std::abs(*contactTime - 0.0045) < 1e-12))
+    {
+        std::cerr << "Expected the engine to find contact at 0.0045 s\n";
+        return false;
+    }
+    const double timeToContact = *contactTime;
+    std::cout << "Tunneling demonstration (known limitation)\n"
+              << "Before step: A x = " << fastBallA.position.x
+              << " m, B x = " << fastBallB.position.x << " m\n"
+              << "First contact predicted by engine: " << timeToContact << " s\n";
+
+    // save the initial states so both approaches start from the same experiment.
+    engine::physics::Ball continuousBallA = fastBallA;
+    engine::physics::Ball continuousBallB = fastBallB;
+
+    // use the same order as the sandbox: advance both balls, then check their contact.
+    engine::physics::advanceBall(fastBallA, gravityAcceleration, physicsStep, restitution);
+    engine::physics::advanceBall(fastBallB, gravityAcceleration, physicsStep, restitution);
+    const bool touchingAfterStep = engine::physics::areBallsTouching(fastBallA, fastBallB);
+    const bool fastImpactResolved = engine::physics::resolveBallCollision(fastBallA, fastBallB, restitution);
+    std::cout << "After " << physicsStep << " s: A x = " << fastBallA.position.x
+              << " m, B x = " << fastBallB.position.x << " m\n"
+              << "Touching after step: " << (touchingAfterStep ? "true" : "false") << '\n'
+              << "Impact resolved: " << (fastImpactResolved ? "true" : "false") << '\n';
+
+    // retain the missed collision as a baseline for the split-step comparison below.
+    if (touchingAfterStep || fastImpactResolved ||
+        !expectBallState("Discrete fast ball A", fastBallA, {1.0, 1.9995095, 0.0},
+                         {200.0, -0.0981, 0.0}, false) ||
+        !expectBallState("Discrete fast ball B", fastBallB, {-1.0, 1.9995095, 0.0},
+                         {-200.0, -0.0981, 0.0}, false))
+    {
+        std::cerr << "Discrete tunneling demonstration changed; review the collision behavior\n";
+        return false;
+    }
+    std::cout << "Known limitation reproduced: the balls crossed without a detected impact.\n";
+
+    // first advance only as far as the calculated contact, including gravity.
+    engine::physics::advanceBall(continuousBallA, gravityAcceleration, timeToContact, restitution);
+    engine::physics::advanceBall(continuousBallB, gravityAcceleration, timeToContact, restitution);
+    const double contactHeight = 1.99990067375;
+    const double contactVerticalVelocity = -0.044145;
+    if (!expectBallState("Contact position A", continuousBallA, {-0.1, contactHeight, 0.0},
+                         {200.0, contactVerticalVelocity, 0.0}, false) ||
+        !expectBallState("Contact position B", continuousBallB, {0.1, contactHeight, 0.0},
+                         {-200.0, contactVerticalVelocity, 0.0}, false))
+    {
+        return false;
+    }
+
+    // a small distance tolerance resolves predicted contact in any direction without snapping positions.
+    const bool continuousImpactResolved =
+        engine::physics::resolveBallCollision(continuousBallA, continuousBallB, restitution, 1e-9);
+    if (!continuousImpactResolved ||
+        !expectBallState("Contact response A", continuousBallA, {-0.1, contactHeight, 0.0},
+                         {-160.0, contactVerticalVelocity, 0.0}, false) ||
+        !expectBallState("Contact response B", continuousBallB, {0.1, contactHeight, 0.0},
+                         {160.0, contactVerticalVelocity, 0.0}, false))
+    {
+        std::cerr << "Expected one resolved impact with reversed x velocities of 160 m/s\n";
+        return false;
+    }
+
+    // the remaining time uses the rebound velocities; gravity continues across both segments.
+    const double remainingTime = physicsStep - timeToContact;
+    engine::physics::advanceBall(continuousBallA, gravityAcceleration, remainingTime, restitution);
+    engine::physics::advanceBall(continuousBallB, gravityAcceleration, remainingTime, restitution);
+    if (!expectBallState("Split-step final A", continuousBallA, {-0.98, 1.9995095, 0.0},
+                         {-160.0, -0.0981, 0.0}, false) ||
+        !expectBallState("Split-step final B", continuousBallB, {0.98, 1.9995095, 0.0},
+                         {160.0, -0.0981, 0.0}, false) ||
+        engine::physics::areBallsTouching(continuousBallA, continuousBallB))
+    {
+        std::cerr << "Expected separated balls moving away after the complete 0.01 s step\n";
+        return false;
+    }
+    std::cout << "Split-step impact resolved: true\n"
+              << "Remaining time after contact: " << remainingTime << " s\n"
+              << "Split-step final x: A = " << continuousBallA.position.x
+              << " m, B = " << continuousBallB.position.x << " m\n"
+              << "Split-step final vx: A = " << continuousBallA.velocity.x
+              << " m/s, B = " << continuousBallB.velocity.x << " m/s\n"
+              << "Fast-ball collision test passed (contact time, rebound, full-step motion)\n";
+    return true;
+}
+
 } // namespace
 
 int main()
@@ -87,6 +282,11 @@ int main()
     const double gravityAcceleration = -9.81;
     const double physicsStep = 0.01;
     const double restitution = 0.8;
+
+    if (!testBallCollisionTimes() || !testFastBallCollision())
+    {
+        return 1;
+    }
 
     // Report an impact once, while keeping the existing impulse and overlap correction.
     engine::physics::Ball impactA{{0.0, 2.0, 0.0}, {1.0, 0.0, 0.0}, 0.1};

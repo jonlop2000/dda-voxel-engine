@@ -4,33 +4,23 @@
 #include <deque>
 #include <vector>
 
-#include "engine/physics/BallPhysics.h"
+#include "engine/physics/BallSimulation.h"
 
 namespace engine::physics {
-
-struct BallCollisionEvent
-{
-    std::size_t ballA;
-    std::size_t ballB;
-    double simulationTime; // end of the fixed step that resolved the impact.
-
-    // total momentum of this pair, immediately around its collision response (kg*m/s).
-    glm::dvec3 momentumBefore{0.0};
-    glm::dvec3 momentumAfter{0.0};
-
-    // store combined kinetic energy of two colliding balls 
-    double kineticEnergyBefore = 0.0;
-    double kineticEnergyAfter = 0.0;
-    double restitution = 0.0; // setting used for this impact, even if the slider changes later.
-};
 
 // Owns the experiment and its clock; rendering and UI remain in App.
 class PhysicsSandbox
 {
 public:
+    enum class Preset { Default, FastCollision, ThreeBallChain };
+
     PhysicsSandbox();
 
-    // restore the experiment, clocks, and history, preserving pause and physics settings.
+    // selecting a preset resets and pauses, preserving restitution and friction.
+    void loadPreset(Preset preset);
+    Preset preset() const { return preset_; }
+
+    // restore the selected preset, clocks, and history, preserving pause and physics settings.
     void reset();
     void setPaused(bool paused);
     bool isPaused() const { return paused_; }
@@ -61,8 +51,10 @@ private:
     // The scene creates its sphere volumes in this same order.
     std::vector<Ball> balls_;
     std::deque<BallCollisionEvent> recentCollisions_;
+    std::vector<BallCollisionEvent> stepCollisions_;
     double accumulator_ = 0.0;
     double elapsedTime_ = 0.0;
+    Preset preset_ = Preset::Default;
     bool paused_ = false;
     double restitution_ = 0.8;
     double floorFriction_ = 0.2; // sliding friction coefficient for the floor (dimensionless).

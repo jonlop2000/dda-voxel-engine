@@ -35,6 +35,7 @@ void requireConservedMomentum(const engine::physics::BallCollisionEvent& event,
 void requireSameState(const engine::physics::PhysicsSandbox& a,
                       const engine::physics::PhysicsSandbox& b)
 {
+    require(a.preset() == b.preset(), "Different presets");
     require(a.balls().size() == b.balls().size(), "Different ball counts");
     require(a.elapsedTime() == b.elapsedTime(), "Different simulated times");
     require(a.restitution() == b.restitution(), "Different restitution settings");
@@ -135,6 +136,196 @@ void checkFloorFrictionControl()
     std::cout << "PASS live friction control, manual/automatic motion, and reset preservation\n";
 }
 
+void checkFastCollisionPreset()
+{
+    using engine::physics::PhysicsSandbox;
+    using Preset = PhysicsSandbox::Preset;
+    require(PhysicsSandbox{}.preset() == Preset::Default, "Default preset changed");
+    for (double restitution : {0.0, 0.8, 1.0})
+    {
+        PhysicsSandbox manual;
+        manual.update(0.429);
+        require(!manual.recentCollisions().empty(), "Preset switch needs existing history");
+        manual.setRestitution(restitution);
+        manual.setFloorFriction(0.65);
+        manual.loadPreset(Preset::FastCollision);
+        require(manual.preset() == Preset::FastCollision && manual.isPaused() &&
+                manual.elapsedTime() == 0.0 && manual.recentCollisions().empty(),
+                "Selecting the fast preset must reset and pause");
+        require(manual.restitution() == restitution && manual.floorFriction() == 0.65,
+                "Selecting a preset changed physics settings");
+        require(manual.balls().size() == 3 && manual.balls()[0].position.x == -1.0 &&
+                manual.balls()[1].position.x == 1.0 && manual.balls()[0].velocity.x == 200.0 &&
+                manual.balls()[1].velocity.x == -200.0, "Incorrect fast preset setup");
+        const PhysicsSandbox initial = manual;
+        const auto parkedBall = manual.balls()[2];
+        require(parkedBall.isResting && parkedBall.position.y == parkedBall.radius &&
+                parkedBall.position.z == -3.0 && parkedBall.velocity == glm::dvec3{0.0},
+                "Third ball must rest away from the fast pair");
+        manual.update(10.0);
+        requireSameState(manual, initial);
+        PhysicsSandbox automatic = manual;
+        automatic.setPaused(false);
+        automatic.update(0.002);
+        requireSameState(automatic, initial);
+        automatic.update(0.008);
+        manual.step();
+        requireSameState(manual, automatic);
+        require(manual.isPaused() && near(manual.elapsedTime(), 0.01), "Fast step changed playback");
+        require(manual.recentCollisions().size() == 1, "Fast pair missed contact or logged duplicates");
+        const auto& event = manual.recentCollisions().front();
+        require(event.ballA == 0 && event.ballB == 1 && near(event.simulationTime, 0.0045) &&
+                event.restitution == restitution, "Incorrect fast contact pair, time, or restitution");
+        requireConservedMomentum(event, {0.0, -19.62 * 0.0045, 0.0});
+        require(near(event.kineticEnergyBefore - event.kineticEnergyAfter,
+                     40000.0 * (1.0 - restitution * restitution)), "Incorrect fast impact energy loss");
+        // contact leaves 0.0055 s to travel at the rebound speed.
+        for (int index = 0; index < 2; ++index)
+        {
+            const double direction = index == 0 ? -1.0 : 1.0;
+            const auto& ball = manual.balls()[index];
+            require(near(ball.position.x, direction * (0.1 + 200.0 * restitution * 0.0055)) &&
+                    near(ball.velocity.x, direction * 200.0 * restitution) &&
+                    near(ball.position.y, 1.9995095) && near(ball.velocity.y, -0.0981) &&
+                    ball.position.z == 0.0 && ball.velocity.z == 0.0,
+                    "Fast pair did not consume the complete step around its impact");
+        }
+        for (int step = 0; step < 100; ++step)
+        {
+            manual.step();
+            automatic.update(PhysicsSandbox::timeStep);
+            requireSameState(manual, automatic);
+            for (const auto& ball : manual.balls())
+                require(std::abs(ball.position.x) <= 5.0 - ball.radius && ball.position.y >= ball.radius,
+                        "Fast preset escaped its boundaries");
+        }
+        require(manual.balls()[2].position == parkedBall.position && manual.balls()[2].isResting &&
+                manual.balls()[2].velocity == glm::dvec3{0.0}, "Parked ball moved");
+        for (bool paused : {false, true})
+        {
+            manual.setPaused(paused);
+            manual.reset();
+            requireSameState(manual, initial);
+            require(manual.isPaused() == paused, "Preset reset changed playback state");
+        }
+        manual.step();
+        manual.loadPreset(Preset::FastCollision);
+        requireSameState(manual, initial);
+        require(manual.isPaused(), "Reselecting a preset must pause");
+        manual.step();
+        manual.loadPreset(Preset::Default);
+        PhysicsSandbox expectedDefault;
+        expectedDefault.setRestitution(restitution);
+        expectedDefault.setFloorFriction(0.65);
+        requireSameState(manual, expectedDefault);
+        require(manual.isPaused(), "Returning to the default preset must pause");
+    }
+    std::cout << "PASS fast preset contact, playback, boundaries, resets, and switching\n";
+}
+
+void checkThreeBallChainPreset()
+{
+    using engine::physics::PhysicsSandbox;
+    using Preset = PhysicsSandbox::Preset;
+    struct ExpectedChain
+    {
+        double restitution;
+        std::size_t impactCount;
+        double secondContactTime;
+        double positions[3];
+        double velocities[3];
+    };
+    // reference results follow equal-mass impulses and the travel left after each contact.
+    const ExpectedChain cases[] = {
+        {0.0, 1, 0.012, {0.4, 0.6, 1.0}, {100.0, 100.0, 0.0}},
+        {0.8, 2, 0.004 + 0.8 / 180.0, {-0.08, 0.828, 1.252}, {20.0, 18.0, 162.0}},
+        {1.0, 2, 0.008, {-0.2, 0.8, 1.4}, {0.0, 0.0, 200.0}}
+    };
+    for (const auto& expected : cases)
+    {
+        PhysicsSandbox manual;
+        manual.update(0.429);
+        manual.setRestitution(expected.restitution);
+        manual.setFloorFriction(0.65);
+        manual.loadPreset(Preset::ThreeBallChain);
+        require(manual.preset() == Preset::ThreeBallChain && manual.isPaused() &&
+                manual.elapsedTime() == 0.0 && manual.recentCollisions().empty(),
+                "Selecting the chain preset must reset and pause");
+        require(manual.restitution() == expected.restitution && manual.floorFriction() == 0.65,
+                "Chain preset changed physics settings");
+        require(manual.balls().size() == 3, "Chain needs three balls");
+        for (int index = 0; index < 3; ++index)
+        {
+            const auto& ball = manual.balls()[index];
+            require(ball.mass == 1.0 && ball.radius == 0.1 && !ball.isResting &&
+                    ball.position == glm::dvec3{index - 1.0, 2.0, 0.0} &&
+                    ball.velocity == glm::dvec3{index == 0 ? 200.0 : 0.0, 0.0, 0.0},
+                    "Incorrect chain starting state");
+        }
+        const PhysicsSandbox initial = manual;
+        manual.update(10.0);
+        requireSameState(manual, initial);
+        PhysicsSandbox automatic = manual;
+        automatic.setPaused(false);
+        automatic.update(0.002);
+        requireSameState(automatic, initial);
+        automatic.update(0.008);
+        manual.step();
+        requireSameState(manual, automatic);
+        require(manual.isPaused() && near(manual.elapsedTime(), 0.01), "Chain step changed playback");
+        require(manual.recentCollisions().size() == expected.impactCount,
+                "Chain missed a contact or reported an extra impact in the first step");
+        for (std::size_t index = 0; index < expected.impactCount; ++index)
+        {
+            const auto& event = manual.recentCollisions()[index];
+            const double time = index == 0 ? 0.004 : expected.secondContactTime;
+            const double incomingSpeed = index == 0 ? 200.0 : 100.0 * (1.0 + expected.restitution);
+            require(event.ballA == index && event.ballB == index + 1 &&
+                    near(event.simulationTime, time) && event.restitution == expected.restitution,
+                    "Incorrect chain impact order, contact time, or restitution");
+            requireConservedMomentum(event, {incomingSpeed, -19.62 * time, 0.0});
+            const double lostEnergy = 0.25 * (1.0 - expected.restitution * expected.restitution) *
+                                      incomingSpeed * incomingSpeed;
+            require(near(event.kineticEnergyBefore - event.kineticEnergyAfter, lostEnergy),
+                    "Incorrect chain impact energy loss");
+        }
+        for (int index = 0; index < 3; ++index)
+        {
+            const auto& ball = manual.balls()[index];
+            require(near(ball.position.x, expected.positions[index]) &&
+                    near(ball.velocity.x, expected.velocities[index]) &&
+                    near(ball.position.y, 1.9995095) && near(ball.velocity.y, -0.0981) &&
+                    ball.position.z == 0.0 && ball.velocity.z == 0.0,
+                    "Chain did not finish the step with the expected position and velocity");
+        }
+        for (bool paused : {false, true})
+        {
+            manual.setPaused(paused);
+            manual.reset();
+            requireSameState(manual, initial);
+            require(manual.isPaused() == paused, "Chain reset changed playback");
+        }
+        manual.step();
+        manual.loadPreset(Preset::ThreeBallChain);
+        requireSameState(manual, initial);
+        require(manual.isPaused(), "Reloading the chain must pause");
+        for (Preset destination : {Preset::FastCollision, Preset::Default})
+        {
+            manual.loadPreset(Preset::ThreeBallChain);
+            manual.step();
+            manual.loadPreset(destination);
+            PhysicsSandbox restored;
+            restored.setRestitution(expected.restitution);
+            restored.setFloorFriction(0.65);
+            restored.loadPreset(destination);
+            requireSameState(manual, restored);
+            require(manual.isPaused() && manual.balls()[2].mass == 4.0,
+                    "Leaving the chain must pause and restore the other preset's masses");
+        }
+    }
+    std::cout << "PASS chain preset sequential contacts, settings, playback, and reset/switching\n";
+}
+
 } // namespace
 
 int main()
@@ -194,6 +385,11 @@ int main()
         requireSameState(paused, fresh);
         std::cout << "PASS reset restores balls, clears both clocks, and preserves playback state\n";
 
+        // first contact occurs when the x separation is sqrt(0.2 squared - 0.1 squared).
+        const double firstContactTime = (1.0 - std::sqrt(0.03)) / 2.0;
+        const glm::dvec3 firstMomentum{0.0, -19.62 * firstContactTime, 0.0};
+        // solving the next relative trajectory after that impulse gives this contact time.
+        const double secondContactTime = 0.5403149509770393;
         PhysicsSandbox automatic;
         PhysicsSandbox manual;
         manual.setPaused(true);
@@ -203,20 +399,20 @@ int main()
             manual.step();
             requireSameState(automatic, manual);
         }
-        require(near(manual.elapsedTime(), 0.42), "Incorrect collision time");
-        require(near(manual.balls()[0].velocity.x, -0.29438202247191) &&
-                near(manual.balls()[0].velocity.z, -0.808988764044944) &&
-                near(manual.balls()[1].velocity.x, 0.29438202247191) &&
-                near(manual.balls()[1].velocity.z, 0.808988764044944), "Off-center response changed");
+        require(near(manual.elapsedTime(), 0.42), "Incorrect time after 42 fixed steps");
+        require(near(manual.balls()[0].velocity.x, -0.35) &&
+                near(manual.balls()[0].velocity.z, -0.45 * std::sqrt(3.0)) &&
+                near(manual.balls()[1].velocity.x, 0.35) &&
+                near(manual.balls()[1].velocity.z, 0.45 * std::sqrt(3.0)), "Off-center response changed");
         require(near(manual.balls()[0].velocity.y, -4.1202) &&
                 near(manual.balls()[1].velocity.y, -4.1202), "Vertical motion changed");
         std::cout << "PASS automatic and manual steps agree through the off-center collision\n";
         require(manual.recentCollisions().size() == 1, "Expected one A-B impact");
         const auto firstImpact = manual.recentCollisions().front();
         require(firstImpact.ballA == 0 && firstImpact.ballB == 1 &&
-                near(firstImpact.simulationTime, 0.42), "Incorrect first impact pair or timestamp");
-        // Two 1 kg balls at vy = -9.81 * 0.42; gravity is outside the impact measurement.
-        requireConservedMomentum(firstImpact, {0.0, -8.2404, 0.0});
+                near(firstImpact.simulationTime, firstContactTime), "Incorrect first impact pair or timestamp");
+        // measure momentum at actual contact; gravity acts outside the impulse.
+        requireConservedMomentum(firstImpact, firstMomentum);
         for (int step = 42; step < 60; ++step)
         {
             automatic.update(PhysicsSandbox::timeStep);
@@ -226,12 +422,12 @@ int main()
         require(manual.recentCollisions().size() == 2, "Expected A-B and A-C impacts without duplicates");
         const auto secondImpact = manual.recentCollisions().back();
         require(secondImpact.ballA == 0 && secondImpact.ballB == 2 &&
-                near(secondImpact.simulationTime, 0.55), "Incorrect second impact pair or timestamp");
-        // A is 1 kg and C is 4 kg; these values belong to the 0.55 s impact, not the current 0.60 s frame.
-        requireConservedMomentum(secondImpact, {-0.29438202247191, -26.9775, 3.191011235955056});
-        requireConservedMomentum(manual.recentCollisions().front(), {0.0, -8.2404, 0.0});
+                near(secondImpact.simulationTime, secondContactTime), "Incorrect second impact pair or timestamp");
+        // the second pair contains a one-kilogram ball and a four-kilogram ball.
+        requireConservedMomentum(secondImpact, {-0.35, -49.05 * secondContactTime, 4.0 - 0.45 * std::sqrt(3.0)});
+        requireConservedMomentum(manual.recentCollisions().front(), firstMomentum);
         std::cout << "PASS equal- and unequal-mass impacts conserve captured pair momentum\n";
-        // Both impacts can occur within one rendered frame; retain their individual step times.
+        // both impacts can occur within one rendered frame; retain their actual contact times.
         PhysicsSandbox oneFrame;
         oneFrame.update(0.605);
         requireSameState(oneFrame, automatic);
@@ -240,7 +436,7 @@ int main()
         manual.reset();
         require(manual.isPaused(), "Clearing history must preserve pause state");
         requireSameState(manual, fresh);
-        std::cout << "PASS collision history preserves pairs and step times across playback and reset\n";
+        std::cout << "PASS collision history preserves pairs and contact times across playback and reset\n";
 
         PhysicsSandbox bounded;
         bounded.setRestitution(-0.5);
@@ -266,12 +462,12 @@ int main()
             require(stepped.recentCollisions().size() == 1, "Expected the first impact only");
             const auto event = stepped.recentCollisions().front();
             require(event.restitution == value, "Impact did not record its restitution setting");
-            requireConservedMomentum(event, {0.0, -8.2404, 0.0});
-            // the first pair has equal 1 kg masses and approach direction (0.16, 0, 0.10).
+            requireConservedMomentum(event, firstMomentum);
+            // the first pair has equal masses and contact normal (sqrt(3)/2, 0, 1/2).
             // lost energy is half the reduced mass times (1 - e squared) times normal speed squared.
-            const double normalSpeedSquared = 4.0 * 0.16 * 0.16 / (0.16 * 0.16 + 0.10 * 0.10);
+            const double normalSpeedSquared = 3.0;
             const double expectedLoss = 0.25 * (1.0 - value * value) * normalSpeedSquared;
-            require(near(event.kineticEnergyBefore, 17.97604804), "Incorrect initial impact energy");
+            require(near(event.kineticEnergyBefore, 1.0 + std::pow(9.81 * firstContactTime, 2)), "Incorrect initial impact energy");
             require(near(event.kineticEnergyBefore - event.kineticEnergyAfter, expectedLoss),
                     "Impact energy loss does not match restitution");
             require(event.kineticEnergyAfter > 0.0, "Zero restitution must preserve shared and tangential motion");
@@ -310,6 +506,8 @@ int main()
         std::cout << "PASS restitution controls floor bounces as well as ball impacts\n";
 
         checkFloorFrictionControl();
+        checkFastCollisionPreset();
+        checkThreeBallChainPreset();
 
         PhysicsSandbox settled;
         for (int step = 0; step < 3000; ++step) settled.update(PhysicsSandbox::timeStep);

@@ -16,10 +16,64 @@ namespace engine::physics {
         return distanceSquared <= combinedRadius * combinedRadius;
     }
 
-    bool resolveBallCollision(Ball &ballA, Ball &ballB, double restitution)
+    std::optional<double> findBallCollisionTime(const Ball& ballA, const Ball& ballB,
+                                                double maxTime)
     {
-        const bool touching = areBallsTouching(ballA, ballB);
-        if (!touching)
+        if (!std::isfinite(maxTime) || maxTime < 0.0 ||
+            !std::isfinite(ballA.radius) || ballA.radius < 0.0 ||
+            !std::isfinite(ballB.radius) || ballB.radius < 0.0)
+        {
+            return std::nullopt;
+        }
+
+        const glm::dvec3 relativePosition = ballB.position - ballA.position;
+        const glm::dvec3 relativeVelocity = ballB.velocity - ballA.velocity;
+        const double combinedRadius = ballA.radius + ballB.radius;
+        const double quadraticA = glm::dot(relativeVelocity, relativeVelocity);
+        const double quadraticB = 2.0 * glm::dot(relativePosition, relativeVelocity);
+        const double quadraticC = glm::dot(relativePosition, relativePosition)
+            - combinedRadius * combinedRadius;
+        // invalid or overflowing coefficients cannot produce a reliable contact time.
+        if (!std::isfinite(quadraticA) || !std::isfinite(quadraticB) || !std::isfinite(quadraticC))
+        {
+            return std::nullopt;
+        }
+
+        // existing contact is a geometric result; the caller decides whether an impulse is needed.
+        if (quadraticC <= 0.0)
+        {
+            return 0.0;
+        }
+        // separated balls cannot meet without relative motion toward one another.
+        if (quadraticA == 0.0 || quadraticB >= 0.0)
+        {
+            return std::nullopt;
+        }
+
+        // fused multiply-add reduces rounding in the subtraction that forms the discriminant.
+        const double discriminant = std::fma(-4.0 * quadraticA, quadraticC,
+                                             quadraticB * quadraticB);
+        if (!std::isfinite(discriminant) || discriminant < 0.0)
+        {
+            return std::nullopt;
+        }
+        // this is the smaller quadratic root, rearranged to avoid subtracting similar numbers.
+        const double timeToContact = (2.0 * quadraticC) /
+            (-quadraticB + std::sqrt(discriminant));
+        if (!std::isfinite(timeToContact) || timeToContact < 0.0 || timeToContact > maxTime)
+        {
+            return std::nullopt;
+        }
+        return timeToContact;
+    }
+
+    bool resolveBallCollision(Ball &ballA, Ball &ballB, double restitution, double contactTolerance)
+    {
+        if (!std::isfinite(contactTolerance) || contactTolerance < 0.0) return false;
+        const glm::dvec3 offset = ballB.position - ballA.position;
+        const double distanceSquared = glm::dot(offset, offset);
+        const double allowedDistance = ballA.radius + ballB.radius + contactTolerance;
+        if (!(distanceSquared <= allowedDistance * allowedDistance))
         {
             return false;
         }
@@ -28,8 +82,6 @@ namespace engine::physics {
         const double inverseMassB = (1.0 /ballB.mass);
         const double inverseMassSum = inverseMassA + inverseMassB;
 
-        const glm::dvec3 offset = ballB.position - ballA.position;
-        const double distanceSquared = glm::dot(offset,offset);
         const double distance = std::sqrt(distanceSquared);
         glm::dvec3 normal;
         if (distance > 0.0)

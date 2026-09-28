@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include <glm/vec3.hpp>
 
 namespace engine::physics {
@@ -23,9 +25,21 @@ struct Plane
 // lol
 bool areBallsTouching(const Ball& ballA, const Ball& ballB);
 
+// predict the first contact in the inclusive interval from zero to the supplied maximum time.
+// assumes constant relative velocity, such as free flight under the same gravity.
+// touching or overlapping returns zero, even when separating; this does not request an impulse.
+// returns an empty optional for no contact, invalid inputs, or non-finite calculations.
+// this query does not move the balls or account for intervening boundary hits or friction.
+std::optional<double> findBallCollisionTime(
+    const Ball& ballA,
+    const Ball& ballB,
+    double maxTime);
+
 // resolve contact and overlap; return true only when an impact applies a velocity impulse.
 // separating or stationary contacts may need position correction without a new impact.
-bool resolveBallCollision(Ball& ballA, Ball& ballB, double restitution);
+// the optional tolerance accepts a small surface gap at a predicted contact, in meters.
+bool resolveBallCollision(Ball& ballA, Ball& ballB, double restitution,
+                          double contactTolerance = 0.0);
 
 // returns signed distance in meters; plane.normal must have length 1.
 // positive is on the side the normal points toward.

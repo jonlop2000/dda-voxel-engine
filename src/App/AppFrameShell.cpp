@@ -259,6 +259,31 @@ FrameShellInputs App::updateFrame()
         {
             if (ImGui::Begin("Physics Sandbox"))
             {
+                using Preset = engine::physics::PhysicsSandbox::Preset;
+                struct PresetOption { Preset value; const char* name; };
+                const PresetOption presetOptions[] = {
+                    {Preset::Default, "Default (three balls)"},
+                    {Preset::FastCollision, "Fast collision (200 m/s)"},
+                    {Preset::ThreeBallChain, "Three-ball chain reaction"}
+                };
+                const char* selectedPresetName = presetOptions[0].name;
+                for (const auto& option : presetOptions)
+                    if (physicsSandbox_.preset() == option.value) selectedPresetName = option.name;
+                if (ImGui::BeginCombo("Preset", selectedPresetName))
+                {
+                    for (const auto& option : presetOptions)
+                    {
+                        const bool selected = physicsSandbox_.preset() == option.value;
+                        if (ImGui::Selectable(option.name, selected))
+                        {
+                            physicsSandbox_.loadPreset(option.value);
+                            physicsSandboxResetThisFrame = true;
+                        }
+                        if (selected) ImGui::SetItemDefaultFocus();
+                    }
+                    ImGui::EndCombo();
+                }
+                ImGui::TextWrapped("Selecting a preset resets and pauses. Physics settings are preserved.");
                 if (ImGui::Button("Reset"))
                 {
                     physicsSandbox_.reset();
@@ -298,9 +323,41 @@ FrameShellInputs App::updateFrame()
                 }
                 ImGui::TextWrapped("Slows sliding after bouncing settles. "
                                    "0 disables floor friction. Reset to replay.");
+                if (physicsSandbox_.preset() == Preset::FastCollision)
+                {
+                    ImGui::Separator();
+                    ImGui::TextWrapped("A and B approach at 200 m/s each. C rests off to the side. "
+                                       "From reset, press Step once to inspect the first impact.");
+                    ImGui::TextUnformatted("Expected first contact: 0.004500 s (A-B)");
+                    ImGui::TextWrapped("With restitution 0.80, after one step: "
+                                       "A has x = -0.980 m, vx = -160 m/s; "
+                                       "B has x = +0.980 m, vx = +160 m/s.");
+                    ImGui::Text("Current center x (m): A %.3f | B %.3f",
+                                physicsSandbox_.balls()[0].position.x,
+                                physicsSandbox_.balls()[1].position.x);
+                }
+                if (physicsSandbox_.preset() == Preset::ThreeBallChain)
+                {
+                    ImGui::Separator();
+                    ImGui::TextWrapped("Three equal 1 kg balls. A starts at 200 m/s; B and C start stationary. "
+                                       "For full horizontal velocity transfer, set restitution to 1.00, "
+                                       "then Reset and Step once.");
+                    // after the first impulse, b travels its 0.8 m gap at 100 * (1 + e) m/s.
+                    const double secondContactTime = 0.004 + 0.8 / (100.0 * (1.0 + physicsSandbox_.restitution()));
+                    ImGui::TextWrapped("Expected times from reset at the current restitution:");
+                    ImGui::Text("A-B: 0.004000 s | B-C: %.6f s", secondContactTime);
+                    if (secondContactTime > engine::physics::PhysicsSandbox::timeStep)
+                        ImGui::TextWrapped("At this restitution, B-C occurs after the first step.");
+                    ImGui::TextWrapped("At restitution 1.00, after one step: vx is 0, 0, 200 m/s "
+                                       "and x is -0.200, 0.800, 1.400 m for A, B, C.");
+                    ImGui::Text("Current center x (m): A %.3f | B %.3f | C %.3f",
+                                physicsSandbox_.balls()[0].position.x,
+                                physicsSandbox_.balls()[1].position.x,
+                                physicsSandbox_.balls()[2].position.x);
+                }
                 ImGui::Separator();
                 ImGui::TextUnformatted("Recent ball collisions");
-                ImGui::TextDisabled("Physics step time; newest first");
+                ImGui::TextDisabled("Contact time; newest first");
                 if (ImGui::BeginChild("BallCollisionHistory",
                                      ImVec2(0.0f, ImGui::GetTextLineHeightWithSpacing() * 4.0f)))
                 {
@@ -312,7 +369,7 @@ FrameShellInputs App::updateFrame()
                     for (auto event = collisions.rbegin(); event != collisions.rend(); ++event)
                     {
                         // Current ball indices 0, 1, 2 match the A, B, C velocity labels.
-                        ImGui::Text("%.2f s: %c hit %c", event->simulationTime,
+                        ImGui::Text("%.6f s: %c hit %c", event->simulationTime,
                                     'A' + static_cast<int>(event->ballA),
                                     'A' + static_cast<int>(event->ballB));
                     }
@@ -329,7 +386,7 @@ FrameShellInputs App::updateFrame()
                     {
                         const auto& event = collisions.back();
                         const glm::dvec3 momentumChange = event.momentumAfter - event.momentumBefore;
-                        ImGui::Text("%.2f s: %c + %c (kg*m/s)", event.simulationTime,
+                        ImGui::Text("%.6f s: %c + %c (kg*m/s)", event.simulationTime,
                                     'A' + static_cast<int>(event.ballA),
                                     'A' + static_cast<int>(event.ballB));
                         if (ImGui::BeginTable("ImpactMomentum", 4,
@@ -371,7 +428,7 @@ FrameShellInputs App::updateFrame()
                     {
                         const auto& event = collisions.back();
                         const double energyLost = event.kineticEnergyBefore - event.kineticEnergyAfter;
-                        ImGui::Text("%.2f s: %c + %c", event.simulationTime,
+                        ImGui::Text("%.6f s: %c + %c", event.simulationTime,
                                     'A' + static_cast<int>(event.ballA),
                                     'A' + static_cast<int>(event.ballB));
                         ImGui::Text("Restitution at impact: %.2f", event.restitution);
