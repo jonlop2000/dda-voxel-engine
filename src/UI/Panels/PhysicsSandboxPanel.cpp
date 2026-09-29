@@ -5,12 +5,30 @@
 #include <imgui.h>
 #include <glm/geometric.hpp>
 #include "engine/physics/PhysicsSandbox.h"
+#include "engine/physics/BallContact.h"
 
 namespace {
 std::string ballLabel(std::size_t index, const engine::physics::PhysicsSandbox& sandbox)
 {
     return sandbox.isStressPreset() ? "Ball " + std::to_string(index + 1) :
            std::string(1, static_cast<char>('A' + index));
+}
+
+double floorSlipSpeed(const engine::physics::Ball& ball)
+{
+    const auto contactVelocity = engine::physics::contactPointVelocity(
+        ball, {0.0, -ball.radius, 0.0});
+    return std::hypot(contactVelocity.x, contactVelocity.z);
+}
+
+const char* motionState(const engine::physics::Ball& ball)
+{
+    const bool centerStopped = glm::length(ball.velocity) <= 1e-8;
+    if (centerStopped && glm::length(ball.angularVelocity) > 1e-8) return "Spinning";
+    const bool supported = engine::physics::isBallSupportedByFloor(ball);
+    if (!supported && !ball.isResting) return "Airborne";
+    if (centerStopped) return "Resting";
+    return supported && floorSlipSpeed(ball) <= 1e-6 ? "Rolling" : "Sliding";
 }
 } // namespace
 
@@ -27,6 +45,9 @@ PhysicsSandboxPanelActions drawPhysicsSandboxPanel(
             {Preset::Default, "Default (three balls)"},
             {Preset::FastCollision, "Fast collision (200 m/s)"},
             {Preset::ThreeBallChain, "Three-ball chain reaction"},
+            {Preset::FreeSpin, "Rotation: free spin"},
+            {Preset::SlideToRoll, "Rotation: sliding to rolling"},
+            {Preset::SpinCollision, "Rotation: spin transfer"},
             {Preset::StressDrop, "Stress: falling balls"},
             {Preset::StressPairs, "Stress: approaching pairs"},
             {Preset::StressStacks, "Stress: settling stacks"}
@@ -78,6 +99,27 @@ PhysicsSandboxPanelActions drawPhysicsSandboxPanel(
                 ImGui::TextWrapped("Separated balls fall from four heights, bounce, and settle.");
             ImGui::TextWrapped("These balls have 0.1 m radii, larger than the benchmark fixtures.");
         }
+        if (sandbox.preset() == Preset::FreeSpin)
+        {
+            actions.resetCamera |= ImGui::Button("Close-up camera");
+            ImGui::TextWrapped("A (blue): X axis | B (pink): Y axis | C (yellow): Z axis.");
+            ImGui::TextWrapped("Watch the light stripe and dark patch. Centers stay fixed.");
+            ImGui::TextWrapped("90 degrees per simulated second; one full turn in 4 seconds.");
+            ImGui::TextWrapped("This demonstration disables contact rotation and spin resistance.");
+        }
+        if (sandbox.preset() == Preset::SlideToRoll)
+        {
+            actions.resetCamera |= ImGui::Button("Rolling camera");
+            ImGui::TextWrapped("A: no initial spin | B: already rolling | C: backspin.");
+            ImGui::TextWrapped("Watch floor slip approach zero as friction changes speed and spin.");
+            ImGui::TextWrapped("For ideal rolling, set rolling resistance to 0, then Reset.");
+        }
+        if (sandbox.preset() == Preset::SpinCollision)
+        {
+            actions.resetCamera |= ImGui::Button("Spin-transfer camera");
+            ImGui::TextWrapped("Spinning A strikes B off-center. Contact friction transfers spin.");
+            ImGui::TextWrapped("Compare ball friction 0 with 0.2; Reset between runs.");
+        }
         float speed = static_cast<float>(sandbox.playbackSpeed());
         if (ImGui::SliderFloat("Playback speed", &speed, 0.1f, 1.0f, "%.2fx",
                                ImGuiSliderFlags_AlwaysClamp))
@@ -107,14 +149,18 @@ PhysicsSandboxPanelActions drawPhysicsSandboxPanel(
         ImGui::TextDisabled("CPU physics timings; excludes rendering.");
         if (sandbox.isStressPreset())
         {
-            std::size_t resting = 0, sliding = 0;
+            std::size_t airborne = 0, sliding = 0, rolling = 0, spinning = 0, resting = 0;
             for (const auto& ball : sandbox.balls())
             {
-                if (ball.isResting) ++resting;
-                else if (engine::physics::isBallSupportedByFloor(ball)) ++sliding;
+                const std::string state = motionState(ball);
+                if (state == "Airborne") ++airborne;
+                else if (state == "Sliding") ++sliding;
+                else if (state == "Rolling") ++rolling;
+                else if (state == "Spinning") ++spinning;
+                else ++resting;
             }
-            ImGui::Text("Airborne: %zu | sliding: %zu | resting: %zu",
-                        sandbox.balls().size() - resting - sliding, sliding, resting);
+            ImGui::Text("Airborne: %zu | sliding: %zu | rolling: %zu", airborne, sliding, rolling);
+            ImGui::Text("Spinning: %zu | resting: %zu", spinning, resting);
         }
         if (sandbox.isStressPreset())
         {
@@ -140,8 +186,35 @@ PhysicsSandboxPanelActions drawPhysicsSandboxPanel(
         {
             sandbox.setFloorFriction(floorFriction);
         }
-        ImGui::TextWrapped("Slows sliding after bouncing settles. "
-                           "0 disables floor friction. Reset to replay.");
+        ImGui::TextWrapped("Floor contact friction changes sliding speed and spin when rotation is enabled.");
+        const bool freeSpin = sandbox.preset() == Preset::FreeSpin;
+        bool contactRotation = sandbox.rotationEnabled() && !freeSpin;
+        ImGui::BeginDisabled(freeSpin);
+        if (ImGui::Checkbox("Contact rotation", &contactRotation))
+            sandbox.setRotationEnabled(contactRotation);
+        ImGui::EndDisabled();
+        if (!contactRotation && !freeSpin)
+            ImGui::TextWrapped("Legacy mode: sliding slows without generating spin.");
+        double ballFriction = sandbox.ballFriction();
+        double wallFriction = sandbox.wallFriction();
+        double rollingResistance = sandbox.rollingResistance();
+        ImGui::BeginDisabled(!contactRotation);
+        if (ImGui::SliderScalar("Ball friction", ImGuiDataType_Double, &ballFriction,
+                                &minimumFloorFriction, &maximumFloorFriction, "%.2f",
+                                ImGuiSliderFlags_AlwaysClamp))
+            sandbox.setBallFriction(ballFriction);
+        if (ImGui::SliderScalar("Wall friction", ImGuiDataType_Double, &wallFriction,
+                                &minimumFloorFriction, &maximumFloorFriction, "%.2f",
+                                ImGuiSliderFlags_AlwaysClamp))
+            sandbox.setWallFriction(wallFriction);
+        const double maximumRollingResistance = 0.1;
+        if (ImGui::SliderScalar("Rolling resistance", ImGuiDataType_Double, &rollingResistance,
+                                &minimumFloorFriction, &maximumRollingResistance, "%.3f",
+                                ImGuiSliderFlags_AlwaysClamp))
+            sandbox.setRollingResistance(rollingResistance);
+        ImGui::EndDisabled();
+        ImGui::TextWrapped("Resistance slows supported rolling and twist; 0 allows ideal rolling. "
+                           "Controls affect the next step. Reset to replay.");
         if (sandbox.preset() == Preset::FastCollision)
         {
             ImGui::Separator();
@@ -173,6 +246,26 @@ PhysicsSandboxPanelActions drawPhysicsSandboxPanel(
                         sandbox.balls()[0].position.x,
                         sandbox.balls()[1].position.x,
                         sandbox.balls()[2].position.x);
+        }
+        if (!sandbox.isStressPreset() && ImGui::CollapsingHeader("Rotation", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            for (std::size_t i = 0; i < sandbox.balls().size(); ++i)
+            {
+                const auto& ball = sandbox.balls()[i];
+                ImGui::Text("%s spin (rad/s): %.3f, %.3f, %.3f", ballLabel(i, sandbox).c_str(),
+                            ball.angularVelocity.x, ball.angularVelocity.y, ball.angularVelocity.z);
+                if (engine::physics::isBallSupportedByFloor(ball))
+                    ImGui::Text("  Floor slip: %.4g m/s", floorSlipSpeed(ball));
+                else
+                    ImGui::TextDisabled("  Floor slip: no floor contact");
+                const double rotationalEnergy = 0.5 * engine::physics::ballMomentOfInertia(ball) *
+                                                glm::dot(ball.angularVelocity, ball.angularVelocity);
+                ImGui::Text("  Kinetic energy: spin %.6f J | total %.6f J", rotationalEnergy,
+                            engine::physics::ballKineticEnergy(ball));
+                ImGui::Text("  Orientation (w, x, y, z): %.3f, %.3f, %.3f, %.3f",
+                            ball.orientation.w, ball.orientation.x,
+                            ball.orientation.y, ball.orientation.z);
+            }
         }
         ImGui::Separator();
         ImGui::TextUnformatted("Recent ball collisions");
@@ -250,7 +343,8 @@ PhysicsSandboxPanelActions drawPhysicsSandboxPanel(
                             ballLabel(event.ballA, sandbox).c_str(),
                             ballLabel(event.ballB, sandbox).c_str());
                 ImGui::Text("Restitution at impact: %.2f", event.restitution);
-                ImGui::TextUnformatted("Combined kinetic energy");
+                ImGui::TextUnformatted(event.includesRotation ?
+                    "Combined translation + rotation energy" : "Combined translation energy");
                 ImGui::Text("Before: %.6f J", event.kineticEnergyBefore);
                 ImGui::Text("After:  %.6f J", event.kineticEnergyAfter);
                 ImGui::Text("Lost:   %.6f J", energyLost);
@@ -307,16 +401,14 @@ PhysicsSandboxPanelActions drawPhysicsSandboxPanel(
                 for (int ballIndex = 0; ballIndex < 3; ++ballIndex)
                 {
                     const auto& ball = balls[ballIndex];
-                    // zero vertical speed at the apex is still airborne.
-                    const char* motionState = ball.isResting ? "Resting" :
-                        (engine::physics::isBallSupportedByFloor(ball) ? "Sliding" : "Airborne");
                     ImGui::TableSetColumnIndex(ballIndex + 1);
-                    ImGui::TextUnformatted(motionState);
+                    ImGui::TextUnformatted(motionState(ball));
                 }
                 ImGui::EndTable();
             }
-            ImGui::TextWrapped("Speed x/z = sqrt(vx*vx + vz*vz). "
-                               "Sliding means supported by the floor; resting means supported and stopped.");
+            ImGui::TextWrapped("Rolling means floor slip is near zero while the center moves. "
+                               "Spinning means the center is stopped while orientation changes. "
+                               "Resting means both motion and spin have stopped.");
             ImGui::Separator();
             ImGui::TextUnformatted("Ball A (blue)");
             ImGui::Text("Center height: %.3f m", ballA.position.y);

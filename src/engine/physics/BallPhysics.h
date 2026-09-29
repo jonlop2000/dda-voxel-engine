@@ -12,7 +12,7 @@ struct Ball
     glm::dvec3 position; // center position in meters
     glm::dvec3 velocity; // m/s
     double radius;   // m
-    bool isResting = false; // center stopped with validated support.
+    bool isResting = false; // coupled mode also requires zero spin.
     double mass = 1.0; // kg
     // angular velocity around world axes in radians per second.
     glm::dvec3 angularVelocity{0.0};
@@ -51,7 +51,7 @@ std::optional<double> findBallCollisionTime(
 
 // resolve contact and overlap, returning true only when an impulse is applied.
 bool resolveBallCollision(Ball& ballA, Ball& ballB, double restitution,
-                          double contactTolerance = 0.0); // gap in meters
+                          double contactTolerance = 0.0, double friction = 0.0);
 
 // measure signed distance in meters along the plane's unit normal.
 double signedDistanceToPlane(const glm::dvec3& position, const Plane& plane);
@@ -65,7 +65,7 @@ bool isBallSupportedByFloor(const Ball& ball);
 // ignore nonpositive time and non-finite angular steps.
 void advanceBallRotation(Ball& ball, double deltaTime);
 
-// advance rotation, gravity, boundary impacts, and floor friction.
+// advance spin and the legacy center-only friction teaching model.
 void advanceBall(Ball& ball, double acceleration, double deltaTime, double restitution,
                  double floorFriction = 0.0); // sliding coefficient
 

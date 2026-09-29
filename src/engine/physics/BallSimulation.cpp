@@ -1,6 +1,9 @@
 #include "engine/physics/BallSimulation.h"
 #include "engine/physics/BallBroadPhase.h"
 #include "engine/physics/BallSupport.h"
+#include "engine/physics/BallContact.h"
+#include "engine/physics/BallContactForces.h"
+#include "engine/physics/BallRotationalSupport.h"
 
 #include <algorithm>
 #include <array>
@@ -96,20 +99,41 @@ bool persistentContact(const Ball& a, const Ball& b)
         std::abs(glm::dot(b.velocity - a.velocity, contactNormal(a, b))) < restitutionSpeedThreshold;
 }
 
-void resolveBoundaries(Ball& ball, double restitution)
+bool resolveBoundaries(Ball& ball, const BallSimulationSettings& settings)
 {
+    const auto oldVelocity = ball.velocity;
+    const auto oldSpin = ball.angularVelocity;
+    const double restitution = settings.restitution;
+    const auto reflect = [&](const glm::dvec3& normal, double bounce, double friction) {
+        const double incoming = glm::dot(ball.velocity, normal);
+        const double impulse = -(1.0 + bounce) * incoming * ball.mass;
+        ball.velocity -= (1.0 + bounce) * incoming * normal;
+        applyBallBoundaryFriction(ball, normal, impulse, friction);
+    };
     const double limit = 5.0 - ball.radius;
     for (int axis : {0, 2})
     {
         if (ball.position[axis] >= limit - contactTolerance && ball.velocity[axis] > 0.0)
         {
             ball.position[axis] = limit;
-            ball.velocity[axis] *= -restitution;
+            if (settings.enableRotation)
+            {
+                glm::dvec3 normal{0.0};
+                normal[axis] = -1.0;
+                reflect(normal, restitution, settings.wallFriction);
+            }
+            else ball.velocity[axis] *= -restitution;
         }
         if (ball.position[axis] <= -limit + contactTolerance && ball.velocity[axis] < 0.0)
         {
             ball.position[axis] = -limit;
-            ball.velocity[axis] *= -restitution;
+            if (settings.enableRotation)
+            {
+                glm::dvec3 normal{0.0};
+                normal[axis] = 1.0;
+                reflect(normal, restitution, settings.wallFriction);
+            }
+            else ball.velocity[axis] *= -restitution;
         }
         ball.position[axis] = std::clamp(ball.position[axis], -limit, limit);
     }
@@ -117,10 +141,15 @@ void resolveBoundaries(Ball& ball, double restitution)
     {
         ball.position.y = ball.radius;
         const double rebound = -restitution * ball.velocity.y;
-        ball.velocity.y = rebound <= floorRestSpeed ? 0.0 : rebound;
+        if (settings.enableRotation && ball.velocity.y < 0.0)
+            reflect({0.0, 1.0, 0.0}, rebound <= floorRestSpeed ? 0.0 : restitution,
+                    settings.floorFriction);
+        else ball.velocity.y = rebound <= floorRestSpeed ? 0.0 : rebound;
     }
     ball.position.y = std::max(ball.position.y, ball.radius);
-    ball.isResting = supported(ball) && ball.velocity.x == 0.0 && ball.velocity.z == 0.0;
+    ball.isResting = supported(ball) && ball.velocity.x == 0.0 && ball.velocity.z == 0.0 &&
+        (!settings.enableRotation || ball.angularVelocity == glm::dvec3{0.0});
+    return settings.enableRotation && (ball.velocity != oldVelocity || ball.angularVelocity != oldSpin);
 }
 
 void resolveContacts(std::vector<Ball>& balls, double time,
@@ -128,11 +157,15 @@ void resolveContacts(std::vector<Ball>& balls, double time,
                      std::vector<BallCollisionEvent>& impacts)
 {
     constexpr int maxRebuildsPerPass = 4;
+    const auto energy = [&](const Ball& ball) {
+        return settings.enableRotation ? ballKineticEnergy(ball) :
+            0.5 * ball.mass * glm::dot(ball.velocity, ball.velocity);
+    };
     // repeat contacts so impulses can propagate to neighboring balls.
     for (int pass = 0; pass < 16; ++pass)
     {
         bool changed = false;
-        for (auto& ball : balls) resolveBoundaries(ball, settings.restitution);
+        for (auto& ball : balls) changed = resolveBoundaries(ball, settings) || changed;
         bool filtered = settings.useBroadPhase &&
             broadPhase.findContactCandidates(balls, contactTolerance);
         const auto resolvePair = [&](std::size_t i, std::size_t j) {
@@ -150,18 +183,16 @@ void resolveContacts(std::vector<Ball>& balls, double time,
             const double impactRestitution = approach < restitutionSpeedThreshold ? 0.0 : settings.restitution;
             const bool reportImpact = approach >= restitutionSpeedThreshold;
             const auto momentumBefore = reportImpact ? a.mass * a.velocity + b.mass * b.velocity : glm::dvec3{0.0};
-            const double energyBefore = reportImpact ?
-                0.5 * (a.mass * glm::dot(a.velocity, a.velocity) +
-                       b.mass * glm::dot(b.velocity, b.velocity)) : 0.0;
-            if (resolveBallCollision(a, b, impactRestitution, contactTolerance))
+            const double energyBefore = reportImpact ? energy(a) + energy(b) : 0.0;
+            if (resolveBallCollision(a, b, impactRestitution, contactTolerance,
+                                     settings.enableRotation ? settings.ballFriction : 0.0))
             {
                 // support impulses below the bounce threshold are not new hits.
                 if (reportImpact)
                 {
                     impacts.push_back({i, j, time, momentumBefore,
                         a.mass * a.velocity + b.mass * b.velocity, energyBefore,
-                        0.5 * (a.mass * glm::dot(a.velocity, a.velocity) +
-                               b.mass * glm::dot(b.velocity, b.velocity)), impactRestitution});
+                        energy(a) + energy(b), impactRestitution, settings.enableRotation});
                 }
                 changed = changed || approach >= restingNormalSpeed;
             }
@@ -213,7 +244,7 @@ void resolveContacts(std::vector<Ball>& balls, double time,
         }
         if (!changed) break;
     }
-    for (auto& ball : balls) resolveBoundaries(ball, settings.restitution);
+    for (auto& ball : balls) resolveBoundaries(ball, settings);
 }
 
 std::vector<glm::dvec3> accelerations(const std::vector<Ball>& balls,
@@ -358,18 +389,29 @@ void advanceBallSystem(std::vector<Ball>& balls, double duration, double startTi
     for (;;)
     {
         resolveContacts(balls, startTime + duration - remaining, settings, broadPhase, impacts);
-        settleSupportedBalls(balls, settings.acceleration, settings.floorFriction,
-                             broadPhase, settings.useBroadPhase);
-        if (remaining <= 0.0) break;
         double segment = remaining;
-        const auto acceleration = accelerations(balls, settings, broadPhase, segment);
+        ContactAccelerations motion;
+        if (settings.enableRotation)
+        {
+            motion = calculateContactAccelerations(balls, settings, broadPhase, remaining);
+            settleRotatingBalls(balls, settings, motion, broadPhase);
+            segment = motion.horizon;
+        }
+        else
+        {
+            settleSupportedBalls(balls, settings.acceleration, settings.floorFriction,
+                                 broadPhase, settings.useBroadPhase);
+            if (remaining > 0.0) motion.linear = accelerations(balls, settings, broadPhase, segment);
+        }
+        if (remaining <= 0.0) break;
+        const auto& acceleration = motion.linear;
         for (std::size_t i = 0; i < balls.size(); ++i)
         {
             const auto& ball = balls[i];
             const auto& force = acceleration[i];
             stoppingTimes[i] = std::numeric_limits<double>::infinity();
             const double speed = std::hypot(ball.velocity.x, ball.velocity.z);
-            if (supported(ball) && speed > 0.0)
+            if (!settings.enableRotation && supported(ball) && speed > 0.0)
             {
                 const double rate = -glm::dot(force, ball.velocity) / (speed * speed);
                 if (rate > 0.0 && glm::length(force + rate * ball.velocity) < 1e-10)
@@ -409,7 +451,15 @@ void advanceBallSystem(std::vector<Ball>& balls, double duration, double startTi
             auto& ball = balls[i];
             ball.position += ball.velocity * segment + 0.5 * acceleration[i] * segment * segment;
             ball.velocity += acceleration[i] * segment;
-            advanceBallRotation(ball, segment);
+            if (settings.enableRotation)
+            {
+                // use midpoint spin for the orientation update.
+                const auto angularChange = motion.angular[i] * segment;
+                ball.angularVelocity += 0.5 * angularChange;
+                advanceBallRotation(ball, segment);
+                ball.angularVelocity += 0.5 * angularChange;
+            }
+            else advanceBallRotation(ball, segment);
             if (stoppingTimes[i] <= segment) ball.velocity.x = ball.velocity.z = 0.0;
         }
         remaining = std::max(0.0, remaining - segment);

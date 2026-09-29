@@ -1,4 +1,5 @@
 #include "engine/physics/BallPhysics.h"
+#include "engine/physics/BallContact.h"
 
 #include <algorithm>
 #include <cmath>
@@ -124,7 +125,8 @@ namespace engine::physics {
         return timeToContact;
     }
 
-    bool resolveBallCollision(Ball &ballA, Ball &ballB, double restitution, double contactTolerance)
+    bool resolveBallCollision(Ball &ballA, Ball &ballB, double restitution,
+                              double contactTolerance, double friction)
     {
         if (!std::isfinite(contactTolerance) || contactTolerance < 0.0) return false;
         const glm::dvec3 offset = ballB.position - ballA.position;
@@ -162,6 +164,8 @@ namespace engine::physics {
             // the normal points from a to b, so their changes are opposite.
             ballA.velocity -= impulse * inverseMassA;
             ballB.velocity += impulse * inverseMassB;
+            if (friction > 0.0)
+                applyBallPairFriction(ballA, ballB, normal, impulseMagnitude, friction);
 
             // an impact can start a resting ball moving
             ballA.isResting = false;

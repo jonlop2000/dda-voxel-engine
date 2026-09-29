@@ -77,7 +77,7 @@ void requireSameState(const engine::physics::PhysicsSandbox& a,
 void checkFloorFrictionControl()
 {
     using engine::physics::PhysicsSandbox;
-    PhysicsSandbox floor;
+    PhysicsSandbox floor(false);
     floor.setRestitution(0.0);
     floor.setFloorFriction(0.0);
     for (int step = 0; step < 100; ++step) floor.update(PhysicsSandbox::timeStep);
@@ -118,7 +118,7 @@ void checkFloorFrictionControl()
             changed.setPaused(paused);
             changed.setRestitution(0.65);
             changed.reset();
-            PhysicsSandbox expected;
+            PhysicsSandbox expected(false);
             expected.setRestitution(0.65);
             expected.setFloorFriction(coefficient);
             requireSameState(changed, expected);
@@ -126,7 +126,7 @@ void checkFloorFrictionControl()
         }
     }
 
-    PhysicsSandbox bounded;
+    PhysicsSandbox bounded(false);
     bounded.setFloorFriction(-0.5);
     require(bounded.floorFriction() == 0.0, "Negative friction must clamp to zero");
     // friction coefficients can exceed one; only the ui slider uses a range of zero to one.
@@ -143,10 +143,10 @@ void checkFastCollisionPreset()
 {
     using engine::physics::PhysicsSandbox;
     using Preset = PhysicsSandbox::Preset;
-    require(PhysicsSandbox{}.preset() == Preset::Default, "Default preset changed");
+    require(PhysicsSandbox{false}.preset() == Preset::Default, "Default preset changed");
     for (double restitution : {0.0, 0.8, 1.0})
     {
-        PhysicsSandbox manual;
+        PhysicsSandbox manual(false);
         manual.update(0.429);
         require(!manual.recentCollisions().empty(), "Preset switch needs existing history");
         manual.setRestitution(restitution);
@@ -217,7 +217,7 @@ void checkFastCollisionPreset()
         require(manual.isPaused(), "Reselecting a preset must pause");
         manual.step();
         manual.loadPreset(Preset::Default);
-        PhysicsSandbox expectedDefault;
+        PhysicsSandbox expectedDefault(false);
         expectedDefault.setRestitution(restitution);
         expectedDefault.setFloorFriction(0.65);
         requireSameState(manual, expectedDefault);
@@ -246,7 +246,7 @@ void checkThreeBallChainPreset()
     };
     for (const auto& expected : cases)
     {
-        PhysicsSandbox manual;
+        PhysicsSandbox manual(false);
         manual.update(0.429);
         manual.setRestitution(expected.restitution);
         manual.setFloorFriction(0.65);
@@ -317,7 +317,7 @@ void checkThreeBallChainPreset()
             manual.loadPreset(Preset::ThreeBallChain);
             manual.step();
             manual.loadPreset(destination);
-            PhysicsSandbox restored;
+            PhysicsSandbox restored(false);
             restored.setRestitution(expected.restitution);
             restored.setFloorFriction(0.65);
             restored.loadPreset(destination);
@@ -337,7 +337,7 @@ void checkStressPresets()
     {
         for (const std::size_t count : {32u, 100u, 250u})
         {
-            PhysicsSandbox manual;
+            PhysicsSandbox manual(false);
             manual.setStressBallCount(count);
             manual.loadPreset(preset);
             require(manual.isPaused() && manual.balls().size() == count,
@@ -397,7 +397,7 @@ void checkStressPresets()
                     "Leaving stress mode must restore the original experiment");
         }
     }
-    PhysicsSandbox capped;
+    PhysicsSandbox capped(false);
     capped.setStressBallCount(10000);
     require(capped.stressBallCount() == PhysicsSandbox::maxStressBalls,
             "Visual count must respect the volume limit");
@@ -423,7 +423,7 @@ void checkStressPresets()
     capped.reset();
     require(capped.discardedTime() == 0.0, "Reset must clear discarded time");
 
-    PhysicsSandbox slow, stepped;
+    PhysicsSandbox slow(false), stepped(false);
     slow.setPlaybackSpeed(0.25);
     slow.update(0.08);
     stepped.setPaused(true);
@@ -449,7 +449,7 @@ int main()
     using engine::physics::PhysicsSandbox;
     try
     {
-        PhysicsSandbox fresh;
+        PhysicsSandbox fresh(false);
         require(fresh.balls().size() == 3 && !fresh.isPaused(), "Invalid initial experiment");
         require(fresh.balls()[0].mass == 1.0 && fresh.balls()[1].mass == 1.0 &&
                 fresh.balls()[2].mass == 4.0, "Expected masses of 1, 1, and 4 kg");
@@ -460,7 +460,7 @@ int main()
         require(near(fresh.balls()[0].position.x, -0.5) &&
                 near(fresh.balls()[1].position.z, 0.1), "Incorrect starting positions");
 
-        PhysicsSandbox accumulated;
+        PhysicsSandbox accumulated(false);
         accumulated.update(0.025);
         require(near(accumulated.elapsedTime(), 0.02), "Expected two complete steps");
         accumulated.update(0.006);
@@ -469,7 +469,7 @@ int main()
                 near(accumulated.balls()[0].position.y, 1.9955855), "Incorrect accumulated motion");
         std::cout << "PASS fixed steps retain fractional frame time\n";
 
-        PhysicsSandbox paused;
+        PhysicsSandbox paused(false);
         paused.update(0.009);
         paused.setPaused(true);
         paused.update(100.0);
@@ -506,8 +506,8 @@ int main()
         const glm::dvec3 firstMomentum{0.0, -19.62 * firstContactTime, 0.0};
         // solving the next relative trajectory after that impulse gives this contact time.
         const double secondContactTime = 0.5403149509770393;
-        PhysicsSandbox automatic;
-        PhysicsSandbox manual;
+        PhysicsSandbox automatic(false);
+        PhysicsSandbox manual(false);
         manual.setPaused(true);
         for (int step = 0; step < 42; ++step)
         {
@@ -544,7 +544,7 @@ int main()
         requireConservedMomentum(manual.recentCollisions().front(), firstMomentum);
         std::cout << "PASS equal- and unequal-mass impacts conserve captured pair momentum\n";
         // both impacts can occur within one rendered frame; retain their actual contact times.
-        PhysicsSandbox oneFrame;
+        PhysicsSandbox oneFrame(false);
         oneFrame.update(0.605);
         requireSameState(oneFrame, automatic);
         manual.update(10.0);
@@ -554,7 +554,7 @@ int main()
         requireSameState(manual, fresh);
         std::cout << "PASS collision history preserves pairs and contact times across playback and reset\n";
 
-        PhysicsSandbox bounded;
+        PhysicsSandbox bounded(false);
         bounded.setRestitution(-0.5);
         require(bounded.restitution() == 0.0, "Restitution must clamp to zero");
         bounded.setRestitution(1.5);
@@ -567,11 +567,11 @@ int main()
 
         for (double value : {0.0, 0.8, 1.0})
         {
-            PhysicsSandbox stepped;
+            PhysicsSandbox stepped(false);
             stepped.setRestitution(value);
             stepped.setPaused(true);
             for (int step = 0; step < 42; ++step) stepped.step();
-            PhysicsSandbox batched;
+            PhysicsSandbox batched(false);
             batched.setRestitution(value);
             batched.update(0.425);
             requireSameState(stepped, batched);
@@ -598,7 +598,7 @@ int main()
                     "Changing restitution rewrote the recorded impact");
             stepped.reset();
             require(stepped.isPaused(), "Reset must preserve pause while keeping restitution");
-            PhysicsSandbox expectedReset;
+            PhysicsSandbox expectedReset(false);
             expectedReset.setRestitution(nextValue);
             requireSameState(stepped, expectedReset);
         }
@@ -607,7 +607,7 @@ int main()
         // the same setting must reach the boundary response: zero settles, one rebounds.
         for (double value : {0.0, 1.0})
         {
-            PhysicsSandbox floor;
+            PhysicsSandbox floor(false);
             floor.setRestitution(value);
             floor.update(0.705);
             const auto& ball = floor.balls().front();
@@ -626,7 +626,7 @@ int main()
         checkThreeBallChainPreset();
         checkStressPresets();
 
-        PhysicsSandbox settled;
+        PhysicsSandbox settled(false);
         for (int step = 0; step < 3000; ++step) settled.update(PhysicsSandbox::timeStep);
         const auto stoppedBalls = settled.balls();
         for (const auto& ball : stoppedBalls)

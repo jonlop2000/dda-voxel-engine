@@ -5,10 +5,12 @@
 #include <chrono>
 #include <cstddef>
 #include <glm/geometric.hpp>
+#include <glm/gtc/constants.hpp>
 
 namespace engine::physics {
 
-PhysicsSandbox::PhysicsSandbox()
+PhysicsSandbox::PhysicsSandbox(bool enableRotation)
+    : rotationEnabled_(enableRotation)
 {
     reset();
 }
@@ -24,6 +26,13 @@ bool PhysicsSandbox::isStressPreset() const
 {
     return preset_ == Preset::StressDrop || preset_ == Preset::StressPairs ||
            preset_ == Preset::StressStacks;
+}
+
+bool PhysicsSandbox::hasMotion() const
+{
+    return std::any_of(balls_.begin(), balls_.end(), [](const Ball& ball) {
+        return !ball.isResting || ball.angularVelocity != glm::dvec3{0.0};
+    });
 }
 
 void PhysicsSandbox::setStressBallCount(std::size_t count)
@@ -82,6 +91,38 @@ void PhysicsSandbox::reset()
     if (isStressPreset())
     {
         resetStressBalls();
+    }
+    else if (preset_ == Preset::FreeSpin)
+    {
+        balls_.clear();
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            balls_.push_back({{0.75 * (axis - 1), 0.25, 0.0},
+                              {0.0, 0.0, 0.0}, 0.25, true});
+            // each ball completes one turn in four simulated seconds.
+            balls_.back().angularVelocity[axis] = glm::half_pi<double>();
+        }
+    }
+    else if (preset_ == Preset::SlideToRoll)
+    {
+        balls_.clear();
+        for (int lane = 0; lane < 3; ++lane)
+        {
+            balls_.push_back({{-2.0, 0.25, 0.8 * (lane - 1)},
+                              {1.5, 0.0, 0.0}, 0.25});
+            // compare no spin, forward rolling, and backspin.
+            balls_.back().angularVelocity.z = lane == 0 ? 0.0 :
+                                             (lane == 1 ? -6.0 : 6.0);
+        }
+    }
+    else if (preset_ == Preset::SpinCollision)
+    {
+        balls_ = {
+            {{-1.25, 2.5, 0.0}, {2.0, 0.0, 0.0}, 0.25},
+            {{0.25, 2.5, 0.15}, {0.0, 0.0, 0.0}, 0.25},
+            {{2.0, 0.25, -1.5}, {0.0, 0.0, 0.0}, 0.25, true}
+        };
+        balls_[0].angularVelocity.y = 8.0;
     }
     else if (preset_ == Preset::FastCollision)
     {
@@ -147,6 +188,21 @@ void PhysicsSandbox::setFloorFriction(double floorFriction)
     }
 }
 
+void PhysicsSandbox::setBallFriction(double friction)
+{
+    if (std::isfinite(friction)) ballFriction_ = std::max(0.0, friction);
+}
+
+void PhysicsSandbox::setWallFriction(double friction)
+{
+    if (std::isfinite(friction)) wallFriction_ = std::max(0.0, friction);
+}
+
+void PhysicsSandbox::setRollingResistance(double resistance)
+{
+    if (std::isfinite(resistance)) rollingResistance_ = std::max(0.0, resistance);
+}
+
 void PhysicsSandbox::update(double frameTime)
 {
     lastUpdateMilliseconds_ = 0.0;
@@ -184,7 +240,10 @@ void PhysicsSandbox::advanceStep()
 {
     const auto start = std::chrono::steady_clock::now();
     advanceBallSystem(balls_, timeStep, elapsedTime_,
-                      {-9.81, restitution_, floorFriction_}, stepCollisions_);
+                      {-9.81, restitution_, floorFriction_, true,
+                       rotationEnabled_ && preset_ != Preset::FreeSpin,
+                       ballFriction_, wallFriction_, rollingResistance_},
+                      stepCollisions_);
     lastStepMilliseconds_ = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - start).count();
     for (const auto& impact : stepCollisions_)

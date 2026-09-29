@@ -21,6 +21,7 @@
 #include "engine/render/PassRegistry.h"
 #include "engine/render/voxel/VoxelLightingOcclusionPolicy.h"
 #include "engine/scene/WorldStateView.h"
+#include "engine/scene/PhysicsSandboxVisuals.h"
 #include "engine/scene/AquariumScene.h"
 #include "engine/voxel/VoxelSystem.h"
 #if VOXEL_WITH_EDITOR
@@ -269,6 +270,18 @@ FrameShellInputs App::updateFrame()
                     glm::vec3{0.0f, 11.0f, 10.0f} : sceneConfig().cameraPosition;
                 camera_.yaw = physicsSandbox_.isStressPreset() ? 0.0f : sceneConfig().cameraYaw;
                 camera_.pitch = physicsSandbox_.isStressPreset() ? -0.8f : sceneConfig().cameraPitch;
+                if (physicsSandbox_.preset() == engine::physics::PhysicsSandbox::Preset::FreeSpin)
+                {
+                    camera_.position = {0.0f, 1.3f, 2.8f};
+                    camera_.yaw = 0.0f;
+                    camera_.pitch = -0.36f;
+                }
+                else if (physicsSandbox_.preset() == engine::physics::PhysicsSandbox::Preset::SlideToRoll)
+                {
+                    camera_.position = {0.0f, 4.0f, 5.5f};
+                    camera_.yaw = 0.0f;
+                    camera_.pitch = -0.6f;
+                }
             }
         }
     }
@@ -347,22 +360,23 @@ FrameShellInputs App::updateFrame()
         const auto& balls = physicsSandbox_.balls();
         // keep running physics out of the focused idle throttle.
         if (!physicsSandbox_.isPaused() && !voxelDebugSettings_.voxelFreezeTime_ &&
-            std::any_of(balls.begin(), balls.end(), [](const auto& ball) { return !ball.isResting; }))
+            physicsSandbox_.hasMotion())
         {
             lastInteractionTime_ = realNow;
         }
         for (std::size_t ballIndex = 0; ballIndex < balls.size(); ++ballIndex)
         {
             const auto& ball = balls[ballIndex];
-            // subtract the voxel sphere's center offset.
-            const glm::vec3 volumePosition = {
-                static_cast<float>(ball.position.x - 0.12),
-                static_cast<float>(ball.position.y - 0.12),
-                static_cast<float>(ball.position.z - 0.12)
-            };
+            const auto transform = engine::physics::makeBallVisualTransform(ball);
             const auto index = static_cast<uint32_t>(ballIndex);
-            if (voxelWorld_.instancePosition(index) != volumePosition)
-                voxelWorld_.setInstancePosition(index, volumePosition);
+            const auto& volume = voxelWorld_.instances()[index].volume;
+            const auto rotationChange = volume.worldRotation() - transform.rotation;
+            // ignore float normalization noise for unchanged poses.
+            if (volume.worldPosition() != transform.position ||
+                volume.worldScale() != transform.scale ||
+                glm::dot(rotationChange, rotationChange) > 1e-12f)
+                voxelWorld_.setInstanceTransform(index, transform.position,
+                                                transform.rotation, transform.scale);
         }
     }
 

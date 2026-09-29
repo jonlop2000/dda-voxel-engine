@@ -17,6 +17,7 @@ struct BallCollisionEvent
     double kineticEnergyBefore = 0.0; // total pair kinetic energy in joules.
     double kineticEnergyAfter = 0.0;
     double restitution = 0.0; // restitution used by this impact.
+    bool includesRotation = false; // energy snapshots include spin.
 };
 
 struct BallSimulationSettings
@@ -26,6 +27,11 @@ struct BallSimulationSettings
     double floorFriction = 0.2;
     // disable filtering to use the all-pairs reference search.
     bool useBroadPhase = true;
+    // legacy callers retain center-only friction unless explicitly enabled.
+    bool enableRotation = false;
+    double ballFriction = 0.2;
+    double wallFriction = 0.2;
+    double rollingResistance = 0.0; // contact torque coefficient.
 };
 
 // advance valid balls through contacts in time order, replacing output events.

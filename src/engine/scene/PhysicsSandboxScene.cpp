@@ -1,6 +1,6 @@
 #include "engine/scene/PhysicsSandboxScene.h"
+#include "engine/scene/PhysicsSandboxVisuals.h"
 
-#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -34,16 +34,6 @@ engine::PaletteEntryCPU makeEntry(const glm::vec3& color, float roughness, float
     return entry;
 }
 
-std::vector<uint8_t> buildSphereVolume(const glm::ivec3& dims, uint8_t materialId)
-{
-    engine::VoxelBuilder builder(dims);
-    const glm::vec3 center = glm::vec3(dims) * 0.5f;
-    const float radius = std::min({center.x, center.y, center.z}) - 2.0f;
-    builder.fillSphere(center, radius, materialId);
-    return std::move(builder.data());
-}
-
-
 std::vector<uint8_t> buildBoxVolume(const glm::ivec3& dims, uint8_t materialId)
 {
     engine::VoxelBuilder builder(dims);
@@ -66,6 +56,10 @@ bool PhysicsSandboxScene::init(VulkanContext& ctx, engine::VoxelWorld& world,
     palette.setEntry(0, kMatSphereC, makeEntry(glm::vec3(0.95f, 0.8f, 0.15f), 0.2f, 0.1f));
     palette.setEntry(0, kMatFloor, makeEntry(glm::vec3(0.45f, 0.85f, 0.55f), 0.6f, 0.0f));
     palette.setEntry(0, kMatWall, makeEntry(glm::vec3(0.9f, 0.55f, 0.2f), 0.6f, 0.0f));
+    palette.setEntry(0, engine::physics::ballStripeMaterial,
+                     makeEntry(glm::vec3(0.95f, 0.97f, 1.0f), 0.5f, 0.0f));
+    palette.setEntry(0, engine::physics::ballMarkerMaterial,
+                     makeEntry(glm::vec3(0.025f, 0.03f, 0.04f), 0.5f, 0.0f));
 
     if (!palette.upload(ctx))
     {
@@ -82,18 +76,14 @@ bool PhysicsSandboxScene::init(VulkanContext& ctx, engine::VoxelWorld& world,
     for (std::size_t ballIndex = 0; ballIndex < balls.size(); ++ballIndex)
     {
         const auto& ball = balls[ballIndex];
-        // The current 0.1 m balls use 24-voxel volumes at 0.01 m per voxel.
-        // Subtract the 0.12 m center offset to obtain each volume's origin.
-        const glm::vec3 volumePosition = {
-            static_cast<float>(ball.position.x - 0.12),
-            static_cast<float>(ball.position.y - 0.12),
-            static_cast<float>(ball.position.z - 0.12)
-        };
-        specs.push_back({"Sphere" + std::to_string(ballIndex), {24, 24, 24}, volumePosition,
-                         engine::VoxelVolume::FLAG_DYNAMIC, {0.01f, 0.01f, 0.01f}});
+        const auto transform = engine::physics::makeBallVisualTransform(ball);
+        specs.push_back({"Sphere" + std::to_string(ballIndex),
+                         glm::ivec3{engine::physics::ballVoxelSize}, transform.position,
+                         engine::VoxelVolume::FLAG_DYNAMIC, transform.scale});
+        specs.back().rotation = transform.rotation;
         // A is blue, B is pink, and C is yellow; reuse this sequence for additional balls.
         const uint8_t material = kSphereMaterials[ballIndex % kSphereMaterials.size()];
-        data.push_back(buildSphereVolume(specs.back().dims, material));
+        data.push_back(engine::physics::buildMarkedBallVoxels(material));
     }
 
     // Append each box and its voxel data together, after all the spheres.

@@ -12,14 +12,17 @@ namespace engine::physics {
 class PhysicsSandbox
 {
 public:
-    enum class Preset { Default, FastCollision, ThreeBallChain, StressDrop, StressPairs, StressStacks };
+    enum class Preset { Default, FastCollision, ThreeBallChain, StressDrop,
+                        StressPairs, StressStacks, FreeSpin, SlideToRoll, SpinCollision };
 
-    PhysicsSandbox();
+    explicit PhysicsSandbox(bool enableRotation = true);
 
     // reset and pause the new preset while keeping restitution and friction.
     void loadPreset(Preset preset);
     Preset preset() const { return preset_; }
     bool isStressPreset() const;
+    // report translation or spin independently of playback state.
+    bool hasMotion() const;
     // changing the count resets and pauses an active stress scene.
     void setStressBallCount(std::size_t count);
     std::size_t stressBallCount() const { return stressBallCount_; }
@@ -46,6 +49,16 @@ public:
     // clamp finite values to zero or above; ignore non-finite input.
     void setFloorFriction(double floorFriction);
     double floorFriction() const { return floorFriction_; }
+
+    // free spin overrides coupling without changing the saved setting.
+    void setRotationEnabled(bool enabled) { rotationEnabled_ = enabled; }
+    bool rotationEnabled() const { return rotationEnabled_; }
+    void setBallFriction(double friction);
+    double ballFriction() const { return ballFriction_; }
+    void setWallFriction(double friction);
+    double wallFriction() const { return wallFriction_; }
+    void setRollingResistance(double resistance);
+    double rollingResistance() const { return rollingResistance_; }
 
     // advance fixed steps, limiting stress scenes to four steps per frame.
     void update(double frameTime);
@@ -79,6 +92,10 @@ private:
     bool paused_ = false;
     double restitution_ = 0.8;
     double floorFriction_ = 0.2; // dimensionless sliding coefficient.
+    bool rotationEnabled_ = true;
+    double ballFriction_ = 0.2;
+    double wallFriction_ = 0.2;
+    double rollingResistance_ = 0.02;
 };
 
 } // namespace engine::physics

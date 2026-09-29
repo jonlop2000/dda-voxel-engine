@@ -183,8 +183,11 @@ add_executable(voxel_aquarium
     src/engine/voxel/VoxelMesher.cpp
     src/engine/voxel/WorldGen.cpp
     src/engine/physics/BallPhysics.cpp
+    src/engine/physics/BallContact.cpp
     src/engine/physics/PhysicsSandbox.cpp
     src/engine/physics/BallSimulation.cpp
+    src/engine/physics/BallContactForces.cpp
+    src/engine/physics/BallRotationalSupport.cpp
     src/engine/physics/BallSupport.cpp
     src/engine/physics/BallBroadPhase.cpp
     src/engine/scene/SceneCatalog.cpp
@@ -207,6 +210,7 @@ add_executable(voxel_aquarium
     src/engine/scene/NaturePondScene.cpp
     src/engine/scene/NaturePondSunroofProbe.cpp
     src/engine/scene/PhysicsSandboxScene.cpp
+    src/engine/scene/PhysicsSandboxVisuals.cpp
     src/engine/scene/ProceduralWorldMaterials.cpp
     src/engine/scene/ProceduralWorldScene.cpp
     src/engine/scene/ScenePresentationProfile.cpp
@@ -917,6 +921,7 @@ add_test(NAME sunroof_ground_foliage_tests
 add_executable(ball_physics_tests
     tests/BallPhysicsTests.cpp
     src/engine/physics/BallPhysics.cpp
+    src/engine/physics/BallContact.cpp
 )
 
 target_include_directories(ball_physics_tests PRIVATE
@@ -938,6 +943,7 @@ add_test(NAME ball_physics_tests COMMAND ball_physics_tests)
 add_executable(ball_friction_tests
     tests/BallFrictionTests.cpp
     src/engine/physics/BallPhysics.cpp
+    src/engine/physics/BallContact.cpp
 )
 
 target_include_directories(ball_friction_tests PRIVATE "${CMAKE_SOURCE_DIR}/src")
@@ -955,9 +961,12 @@ add_executable(physics_sandbox_tests
     tests/PhysicsSandboxTests.cpp
     src/engine/physics/PhysicsSandbox.cpp
     src/engine/physics/BallSimulation.cpp
+    src/engine/physics/BallContactForces.cpp
+    src/engine/physics/BallRotationalSupport.cpp
     src/engine/physics/BallSupport.cpp
     src/engine/physics/BallBroadPhase.cpp
     src/engine/physics/BallPhysics.cpp
+    src/engine/physics/BallContact.cpp
 )
 
 target_include_directories(physics_sandbox_tests PRIVATE
@@ -977,9 +986,12 @@ add_test(NAME physics_sandbox_tests COMMAND physics_sandbox_tests)
 add_executable(ball_simulation_tests
     tests/BallSimulationTests.cpp
     src/engine/physics/BallSimulation.cpp
+    src/engine/physics/BallContactForces.cpp
+    src/engine/physics/BallRotationalSupport.cpp
     src/engine/physics/BallSupport.cpp
     src/engine/physics/BallBroadPhase.cpp
     src/engine/physics/BallPhysics.cpp
+    src/engine/physics/BallContact.cpp
 )
 target_include_directories(ball_simulation_tests PRIVATE "${CMAKE_SOURCE_DIR}/src")
 target_link_libraries(ball_simulation_tests PRIVATE glm::glm)
@@ -994,9 +1006,12 @@ set_tests_properties(ball_simulation_tests physics_sandbox_tests PROPERTIES TIME
 add_executable(ball_settling_tests
     tests/BallSettlingTests.cpp
     src/engine/physics/BallSimulation.cpp
+    src/engine/physics/BallContactForces.cpp
+    src/engine/physics/BallRotationalSupport.cpp
     src/engine/physics/BallSupport.cpp
     src/engine/physics/BallBroadPhase.cpp
     src/engine/physics/BallPhysics.cpp
+    src/engine/physics/BallContact.cpp
 )
 target_include_directories(ball_settling_tests PRIVATE "${CMAKE_SOURCE_DIR}/src")
 target_link_libraries(ball_settling_tests PRIVATE glm::glm)
@@ -1011,9 +1026,12 @@ set_tests_properties(ball_settling_tests PROPERTIES TIMEOUT 30)
 add_executable(ball_rotation_tests
     tests/BallRotationTests.cpp
     src/engine/physics/BallSimulation.cpp
+    src/engine/physics/BallContactForces.cpp
+    src/engine/physics/BallRotationalSupport.cpp
     src/engine/physics/BallSupport.cpp
     src/engine/physics/BallBroadPhase.cpp
     src/engine/physics/BallPhysics.cpp
+    src/engine/physics/BallContact.cpp
 )
 target_include_directories(ball_rotation_tests PRIVATE "${CMAKE_SOURCE_DIR}/src")
 target_link_libraries(ball_rotation_tests PRIVATE glm::glm)
@@ -1025,10 +1043,78 @@ endif()
 add_test(NAME ball_rotation_tests COMMAND ball_rotation_tests)
 set_tests_properties(ball_rotation_tests PROPERTIES TIMEOUT 20)
 
+add_executable(ball_visual_tests
+    tests/BallVisualTests.cpp
+    src/engine/scene/PhysicsSandboxVisuals.cpp
+    src/engine/voxel/VoxelBuilder.cpp
+    src/engine/physics/PhysicsSandbox.cpp
+    src/engine/physics/BallSimulation.cpp
+    src/engine/physics/BallContactForces.cpp
+    src/engine/physics/BallRotationalSupport.cpp
+    src/engine/physics/BallSupport.cpp
+    src/engine/physics/BallBroadPhase.cpp
+    src/engine/physics/BallPhysics.cpp
+    src/engine/physics/BallContact.cpp
+)
+target_include_directories(ball_visual_tests PRIVATE "${CMAKE_SOURCE_DIR}/src")
+target_link_libraries(ball_visual_tests PRIVATE glm::glm)
+if(MSVC)
+    target_compile_options(ball_visual_tests PRIVATE /W4 /permissive- /EHsc)
+else()
+    target_compile_options(ball_visual_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+add_test(NAME ball_visual_tests COMMAND ball_visual_tests)
+set_tests_properties(ball_visual_tests PROPERTIES TIMEOUT 20)
+
+add_executable(ball_contact_tests
+    tests/BallContactTests.cpp
+    src/engine/physics/BallContact.cpp
+    src/engine/physics/BallPhysics.cpp
+)
+target_include_directories(ball_contact_tests PRIVATE "${CMAKE_SOURCE_DIR}/src")
+target_link_libraries(ball_contact_tests PRIVATE glm::glm)
+if(MSVC)
+    target_compile_options(ball_contact_tests PRIVATE /W4 /permissive- /EHsc)
+else()
+    target_compile_options(ball_contact_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+add_test(NAME ball_contact_tests COMMAND ball_contact_tests)
+
+foreach(rotation_test IN ITEMS ball_rolling_tests ball_rotational_support_tests coupled_sandbox_tests)
+    if(rotation_test STREQUAL "ball_rolling_tests")
+        set(rotation_test_source tests/BallRollingTests.cpp)
+    elseif(rotation_test STREQUAL "ball_rotational_support_tests")
+        set(rotation_test_source tests/BallRotationalSupportTests.cpp)
+    else()
+        set(rotation_test_source tests/CoupledSandboxTests.cpp)
+    endif()
+    add_executable(${rotation_test}
+        ${rotation_test_source}
+        src/engine/physics/PhysicsSandbox.cpp
+        src/engine/physics/BallSimulation.cpp
+        src/engine/physics/BallPhysics.cpp
+        src/engine/physics/BallContact.cpp
+        src/engine/physics/BallContactForces.cpp
+        src/engine/physics/BallRotationalSupport.cpp
+        src/engine/physics/BallSupport.cpp
+        src/engine/physics/BallBroadPhase.cpp
+    )
+    target_include_directories(${rotation_test} PRIVATE "${CMAKE_SOURCE_DIR}/src")
+    target_link_libraries(${rotation_test} PRIVATE glm::glm)
+    if(MSVC)
+        target_compile_options(${rotation_test} PRIVATE /W4 /permissive- /EHsc)
+    else()
+        target_compile_options(${rotation_test} PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    add_test(NAME ${rotation_test} COMMAND ${rotation_test})
+    set_tests_properties(${rotation_test} PROPERTIES TIMEOUT 60)
+endforeach()
+
 add_executable(ball_broad_phase_tests
     tests/BallBroadPhaseTests.cpp
     src/engine/physics/BallBroadPhase.cpp
     src/engine/physics/BallPhysics.cpp
+    src/engine/physics/BallContact.cpp
 )
 target_include_directories(ball_broad_phase_tests PRIVATE "${CMAKE_SOURCE_DIR}/src")
 target_link_libraries(ball_broad_phase_tests PRIVATE glm::glm)
@@ -1045,9 +1131,12 @@ add_executable(ball_physics_benchmark EXCLUDE_FROM_ALL
     benchmarks/BallPhysicsBenchmark.cpp
     src/engine/physics/PhysicsSandbox.cpp
     src/engine/physics/BallSimulation.cpp
+    src/engine/physics/BallContactForces.cpp
+    src/engine/physics/BallRotationalSupport.cpp
     src/engine/physics/BallSupport.cpp
     src/engine/physics/BallBroadPhase.cpp
     src/engine/physics/BallPhysics.cpp
+    src/engine/physics/BallContact.cpp
 )
 target_include_directories(ball_physics_benchmark PRIVATE "${CMAKE_SOURCE_DIR}/src")
 target_link_libraries(ball_physics_benchmark PRIVATE glm::glm)
