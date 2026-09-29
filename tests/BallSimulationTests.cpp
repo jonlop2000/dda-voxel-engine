@@ -49,7 +49,9 @@ std::vector<BallCollisionEvent> advance(std::vector<Ball>& balls, double duratio
     require(impacts.size() == referenceImpacts.size(), "Broad phase changed impact count");
     for (std::size_t i = 0; i < balls.size(); ++i)
         require(balls[i].position == reference[i].position && balls[i].velocity == reference[i].velocity &&
-                balls[i].isResting == reference[i].isResting, "Broad phase changed ball state");
+                balls[i].isResting == reference[i].isResting &&
+                balls[i].angularVelocity == reference[i].angularVelocity &&
+                balls[i].orientation == reference[i].orientation, "Broad phase changed ball state");
     for (std::size_t i = 0; i < impacts.size(); ++i)
     {
         const auto& actual = impacts[i];

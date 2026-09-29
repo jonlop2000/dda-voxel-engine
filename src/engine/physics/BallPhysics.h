@@ -2,6 +2,7 @@
 
 #include <optional>
 
+#include <glm/gtc/quaternion.hpp>
 #include <glm/vec3.hpp>
 
 namespace engine::physics {
@@ -11,8 +12,12 @@ struct Ball
     glm::dvec3 position; // center position in meters
     glm::dvec3 velocity; // m/s
     double radius;   // m
-    bool isResting = false; // stopped with validated support.
+    bool isResting = false; // center stopped with validated support.
     double mass = 1.0; // kg
+    // angular velocity around world axes in radians per second.
+    glm::dvec3 angularVelocity{0.0};
+    // unit quaternion rotating local directions into world directions.
+    glm::dquat orientation{1.0, 0.0, 0.0, 0.0};
 };
 
 // an axis-aligned box stores the minimum and maximum on each axis.
@@ -56,7 +61,11 @@ glm::dvec3 calculateBounceVelocity(const glm::dvec3& velocity, const glm::dvec3&
 // floor support requires contact and zero vertical velocity.
 bool isBallSupportedByFloor(const Ball& ball);
 
-// advance through gravity, boundary impacts, and supported floor friction.
+// advance a unit orientation using constant world angular velocity.
+// ignore nonpositive time and non-finite angular steps.
+void advanceBallRotation(Ball& ball, double deltaTime);
+
+// advance rotation, gravity, boundary impacts, and floor friction.
 void advanceBall(Ball& ball, double acceleration, double deltaTime, double restitution,
                  double floorFriction = 0.0); // sliding coefficient
 

@@ -68,7 +68,9 @@ void requireSameState(const engine::physics::PhysicsSandbox& a,
             require(first.velocity[axis] == second.velocity[axis], "Different velocities");
         }
         require(first.radius == second.radius && first.isResting == second.isResting &&
-                first.mass == second.mass, "Different ball properties");
+                first.mass == second.mass &&
+                first.angularVelocity == second.angularVelocity &&
+                first.orientation == second.orientation, "Different ball properties");
     }
 }
 

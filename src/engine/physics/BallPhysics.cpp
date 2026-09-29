@@ -288,12 +288,31 @@ namespace engine::physics {
 
     } // namespace
 
+    void advanceBallRotation(Ball& ball, double deltaTime)
+    {
+        if (!std::isfinite(deltaTime) || deltaTime <= 0.0 ||
+            ball.angularVelocity == glm::dvec3{0.0}) return;
+
+        // hypot avoids overflow and underflow when measuring angular speed.
+        const double angularSpeed = std::hypot(ball.angularVelocity.x,
+            ball.angularVelocity.y, ball.angularVelocity.z);
+        if (!std::isfinite(angularSpeed) || angularSpeed == 0.0) return;
+        const double angle = angularSpeed * deltaTime;
+        if (!std::isfinite(angle) || angle == 0.0) return;
+
+        const glm::dvec3 axis = ball.angularVelocity / angularSpeed;
+        const glm::dquat deltaRotation = glm::angleAxis(angle, axis);
+        // world axes require the new rotation on the left.
+        ball.orientation = glm::normalize(deltaRotation * ball.orientation);
+    }
+
     void advanceBall(Ball& ball, double acceleration, double deltaTime, double restitution,
                      double floorFriction)
     {
-        if (ball.isResting || deltaTime <= 0.0) {
-            return;
-        }
+        if (!std::isfinite(deltaTime) || deltaTime <= 0.0) return;
+        // angular velocity stays constant through the current contact model.
+        advanceBallRotation(ball, deltaTime);
+        if (ball.isResting) return;
         // dividing friction force by mass leaves coefficient times gravity.
         const double frictionDeceleration = floorFriction > 0.0 && acceleration < 0.0 ?
             floorFriction * -acceleration : 0.0;

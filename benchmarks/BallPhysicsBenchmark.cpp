@@ -89,7 +89,9 @@ void verify(const Scene& scene, const State& filtered, const State& reference)
         const auto& a = filtered.balls[i];
         const auto& b = reference.balls[i];
         require(a.position == b.position && a.velocity == b.velocity && a.isResting == b.isResting &&
-                a.radius == b.radius && a.mass == b.mass, "Ball state mismatch at index " + std::to_string(i));
+                a.radius == b.radius && a.mass == b.mass &&
+                a.angularVelocity == b.angularVelocity && a.orientation == b.orientation,
+                "Ball state mismatch at index " + std::to_string(i));
         for (int axis = 0; axis < 3; ++axis)
             require(std::isfinite(a.position[axis]) && std::isfinite(a.velocity[axis]), "Non-finite ball state");
         require(std::abs(a.position.x) <= 5.0 - a.radius + 1e-8 &&

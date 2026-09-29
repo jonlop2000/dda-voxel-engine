@@ -1008,6 +1008,23 @@ endif()
 add_test(NAME ball_settling_tests COMMAND ball_settling_tests)
 set_tests_properties(ball_settling_tests PROPERTIES TIMEOUT 30)
 
+add_executable(ball_rotation_tests
+    tests/BallRotationTests.cpp
+    src/engine/physics/BallSimulation.cpp
+    src/engine/physics/BallSupport.cpp
+    src/engine/physics/BallBroadPhase.cpp
+    src/engine/physics/BallPhysics.cpp
+)
+target_include_directories(ball_rotation_tests PRIVATE "${CMAKE_SOURCE_DIR}/src")
+target_link_libraries(ball_rotation_tests PRIVATE glm::glm)
+if(MSVC)
+    target_compile_options(ball_rotation_tests PRIVATE /W4 /permissive- /EHsc)
+else()
+    target_compile_options(ball_rotation_tests PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+add_test(NAME ball_rotation_tests COMMAND ball_rotation_tests)
+set_tests_properties(ball_rotation_tests PROPERTIES TIMEOUT 20)
+
 add_executable(ball_broad_phase_tests
     tests/BallBroadPhaseTests.cpp
     src/engine/physics/BallBroadPhase.cpp

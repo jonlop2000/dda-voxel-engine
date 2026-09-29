@@ -409,6 +409,7 @@ void advanceBallSystem(std::vector<Ball>& balls, double duration, double startTi
             auto& ball = balls[i];
             ball.position += ball.velocity * segment + 0.5 * acceleration[i] * segment * segment;
             ball.velocity += acceleration[i] * segment;
+            advanceBallRotation(ball, segment);
             if (stoppingTimes[i] <= segment) ball.velocity.x = ball.velocity.z = 0.0;
         }
         remaining = std::max(0.0, remaining - segment);
